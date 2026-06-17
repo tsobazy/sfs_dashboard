@@ -700,4 +700,97 @@ server <- function(input, output, session) {
     )
   })
 
+  # ── Player: game list and selection ───────────────────────────────────────
+  player_games <- reactive({
+    req(user_role() == "player")
+    ptype <- user_player_type()
+    col   <- if (ptype == "pitcher") "Pitcher" else "Batter"
+    dates <- player_fdata_base() %>%
+      pull(Date) %>% unique() %>% sort(decreasing = TRUE)
+    dates
+  })
+
+  game_index <- reactiveVal(1L)
+
+  observeEvent(player_games(), { game_index(1L) }, ignoreNULL = TRUE)
+
+  observeEvent(input$prev_game, {
+    g <- player_games()
+    if (length(g) > 0)
+      game_index(min(game_index() + 1L, length(g)))
+  })
+
+  observeEvent(input$next_game, {
+    if (game_index() > 1L)
+      game_index(game_index() - 1L)
+  })
+
+  selected_game <- reactive({
+    g <- player_games()
+    req(length(g) > 0)
+    g[[game_index()]]
+  })
+
+  player_fdata <- reactive({
+    req(user_role() == "player")
+    ptype <- user_player_type()
+    col   <- if (ptype == "pitcher") "Pitcher" else "Batter"
+    player_fdata_base() %>%
+      filter(Date == selected_game())
+  })
+
+  # ── Player: top-level UI ─────────────────────────────────────────────────
+  output$player_ui <- renderUI({
+    req(user_role() == "player")
+    name  <- user_display_name()
+    ptype <- user_player_type()
+
+    pos_row <- roster_positions %>%
+      filter(player_name == user_player_name())
+    jersey   <- if (nrow(pos_row) > 0) pos_row$jersey[1]   else ""
+    position <- if (nrow(pos_row) > 0) pos_row$position[1] else ""
+
+    n_games <- length(player_games())
+
+    tagList(
+      # Header
+      div(
+        style = "display:flex; justify-content:space-between; align-items:center;
+                 margin-bottom:16px; padding-bottom:12px; border-bottom:1px solid #eee;",
+        div(
+          tags$h5(name, style = "margin:0; color:#0a1628;"),
+          tags$small(paste0("#", jersey, " · ", position), style = "color:#666;")
+        ),
+        actionButton("logout", "Log Out", class = "btn-sm btn-outline-secondary")
+      ),
+      # Game browser
+      if (n_games == 0) {
+        div("No games recorded yet.", style = "color:#888; margin:24px 0;")
+      } else {
+        tagList(
+          div(
+            class = "game-nav",
+            actionButton("prev_game", "← Prev Game",
+              class = "btn-sm btn-outline-secondary",
+              disabled = game_index() >= n_games
+            ),
+            span(
+              class = "game-label",
+              format(selected_game(), "%B %d, %Y"),
+              style = "color:#0a1628;"
+            ),
+            actionButton("next_game", "Next Game →",
+              class = "btn-sm btn-outline-secondary",
+              disabled = game_index() <= 1
+            )
+          ),
+          # Section(s) based on player type
+          if (ptype %in% c("pitcher","two-way")) uiOutput("player_pitcher_section"),
+          if (ptype == "two-way") hr(),
+          if (ptype %in% c("hitter","two-way"))  uiOutput("player_hitter_section")
+        )
+      }
+    )
+  })
+
 }
