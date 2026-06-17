@@ -104,6 +104,7 @@ plotly_white <- function(p) {
 }
 
 source("roster.R")
+source("sync_drive.R")
 
 # ── Layout helpers (used by server.R renderUI) ─────────────────────────────────
 
