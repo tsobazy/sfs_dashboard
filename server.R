@@ -44,6 +44,41 @@ server <- function(input, output, session) {
 
   app_data <- reactiveVal(data)
 
+  # ── Game chip selector ─────────────────────────────────────────────────────
+  output$game_selector <- renderUI({
+    req(user_role() == "coach")
+    dates  <- sort(unique(app_data()$Date), decreasing = TRUE)
+    labels <- format(dates, "%b %d")
+    sel    <- if (is.null(input$selected_game_chip)) "Season" else input$selected_game_chip
+
+    make_chip <- function(value, label) {
+      active <- identical(sel, value)
+      tags$button(
+        label,
+        class   = paste("btn btn-sm", if (active) "btn-dark" else "btn-outline-secondary"),
+        onclick = sprintf(
+          "Shiny.setInputValue('selected_game_chip','%s',{priority:'event'})", value
+        )
+      )
+    }
+
+    tagList(
+      make_chip("Season", "Season"),
+      make_chip("Last 5", "Last 5"),
+      lapply(seq_along(dates), function(i) make_chip(as.character(dates[i]), labels[i]))
+    )
+  })
+
+  selected_game_range <- reactive({
+    sel       <- if (is.null(input$selected_game_chip)) "Season" else input$selected_game_chip
+    all_dates <- sort(unique(app_data()$Date), decreasing = TRUE)
+    switch(sel,
+      "Season" = NULL,
+      "Last 5" = head(all_dates, 5L),
+      as.Date(sel)
+    )
+  })
+
   # ── Auth ──────────────────────────────────────────────────────────────────
   result_auth <- secure_server(
     check_credentials = check_credentials(
@@ -92,13 +127,8 @@ server <- function(input, output, session) {
   })
 
   # ── Coach: dynamic filter initialisation ──────────────────────────────────
-  # Runs once on coach login — sets date range and pitch types
   observeEvent(user_role(), {
     req(user_role() == "coach")
-    updateDateRangeInput(session, "dates",
-      start = min(app_data()$Date, na.rm = TRUE),
-      end   = max(app_data()$Date, na.rm = TRUE)
-    )
     pt <- sort(unique(app_data()$TaggedPitchType[app_data()$TaggedPitchType != "Undefined"]))
     updatePickerInput(session, "pitch_types", choices = pt, selected = pt)
   }, once = TRUE)
@@ -120,12 +150,12 @@ server <- function(input, output, session) {
   # ── Master filtered reactive (coach view) ─────────────────────────────────
   fdata <- reactive({
     req(user_role() == "coach")
-    req(input$dates, input$pitch_types, input$count, input$innings)
+    req(input$pitch_types, input$count, input$innings)
 
+    game_dates <- selected_game_range()
     d <- app_data() %>%
       filter(
-        Date >= input$dates[1],
-        Date <= input$dates[2],
+        if (!is.null(game_dates)) Date %in% game_dates else TRUE,
         TaggedPitchType %in% input$pitch_types,
         TaggedPitchType != "Undefined",
         Inning >= input$innings[1],
@@ -898,10 +928,6 @@ server <- function(input, output, session) {
       new_data$Count <- paste0(new_data$Balls, "-", new_data$Strikes)
       app_data(new_data)
 
-      updateDateRangeInput(session, "dates",
-        start = min(new_data$Date, na.rm = TRUE),
-        end   = max(new_data$Date, na.rm = TRUE)
-      )
       pt <- sort(unique(new_data$TaggedPitchType[new_data$TaggedPitchType != "Undefined"]))
       updatePickerInput(session, "pitch_types", choices = pt, selected = pt)
       if (input$view_mode == "Pitching") {

@@ -198,10 +198,8 @@ coach_sidebar <- function() {
         choices = c("All Players", sort(unique(data$Pitcher))),
         options = list(`live-search` = TRUE)
       ),
-      dateRangeInput("dates", "Date Range",
-        start = min(data$Date, na.rm = TRUE),
-        end   = max(data$Date, na.rm = TRUE)
-      ),
+      tags$label("Game", class = "control-label"),
+      div(class = "game-chip-row", uiOutput("game_selector")),
       pickerInput(
         "pitch_types", "Pitch Types",
         choices = pt, selected = pt, multiple = TRUE,
