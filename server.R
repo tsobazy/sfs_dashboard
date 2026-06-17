@@ -541,52 +541,39 @@ server <- function(input, output, session) {
     plotly_clean(ggplotly(p, tooltip = c("label", "x", "y")))
   })
 
-  # ── Chart 9: Spray Chart ──────────────────────────────────────────────────
+  # ── Chart 9: Spray Chart (coach — TaggedHitType + ExitSpeed sizing) ──────────
   output$plot_spray <- renderPlotly({
     req(nrow(fdata()) > 0)
     d <- fdata() %>%
-      filter(
-        !is.na(Direction), !is.na(Distance),
-        PlayResult %in% c("Single","Double","Triple","HomeRun","Out")
-      ) %>%
+      filter(!is.na(Direction), !is.na(Distance),
+             TaggedHitType %in% BIP_TYPES) %>%
       mutate(
-        spray_x =  Distance * sin(Direction * pi / 180),
-        spray_y =  Distance * cos(Direction * pi / 180)
+        spray_x = Distance * sin(Direction * pi / 180),
+        spray_y = Distance * cos(Direction * pi / 180),
+        ev_label = ifelse(is.na(ExitSpeed), "",
+                          paste0("<br>EV: ", round(ExitSpeed, 1), " mph"))
       )
     req(nrow(d) > 0)
 
-    hit_colors <- c(
-      Single = "#2DC653", Double = "#F5C518",
-      Triple = "#FF8C00", HomeRun = "#E63946", Out = "#AAAAAA"
+    bip_colors <- c(
+      GroundBall = "#D97706", FlyBall  = "#2563EB",
+      LineDrive  = "#16A34A", Popup    = "#9CA3AF"
     )
-
-    foul_line_len <- 330
-    cf_depth      <- 400
+    outline <- field_outline_df()
 
     p <- ggplot(d, aes(
-        x = spray_x, y = spray_y, color = PlayResult,
-        text = paste0(Batter, "<br>", PlayResult, "<br>",
-                      round(Distance, 0), " ft @ ", round(Direction, 0), "°")
+        x = spray_x, y = spray_y, color = TaggedHitType, size = ExitSpeed,
+        text = paste0(Batter, "<br>", TaggedHitType, "<br>",
+                      round(Distance, 0), " ft", ev_label)
       )) +
-      # Field outline
-      annotate("segment", x = 0, xend = -foul_line_len * sin(45 * pi/180),
-               y = 0, yend = foul_line_len * cos(45 * pi/180),
-               color = "gray70", linewidth = 0.5) +
-      annotate("segment", x = 0, xend =  foul_line_len * sin(45 * pi/180),
-               y = 0, yend = foul_line_len * cos(45 * pi/180),
-               color = "gray70", linewidth = 0.5) +
-      annotate("path",
-        x = cf_depth * sin(seq(-45, 45, length.out = 100) * pi/180),
-        y = cf_depth * cos(seq(-45, 45, length.out = 100) * pi/180),
-        color = "gray70", linewidth = 0.5
-      ) +
-      geom_point(alpha = 0.75, size = 2.5) +
-      scale_color_manual(values = hit_colors) +
+      geom_path(data = outline, aes(x = x, y = y), inherit.aes = FALSE,
+                color = "gray70", linewidth = 0.5) +
+      geom_point(alpha = 0.72) +
+      scale_color_manual(values = bip_colors) +
+      scale_size_continuous(range = c(1.5, 5), guide = "none") +
       coord_fixed(xlim = c(-350, 350), ylim = c(0, 430)) +
-      labs(
-        title = "Where the Ball Was Hit",
-        x = NULL, y = NULL, color = NULL
-      ) +
+      labs(title = "Batted Ball Chart", subtitle = "Size = Exit Velocity",
+           x = NULL, y = NULL, color = NULL) +
       theme_seagulls() +
       theme(axis.text = element_blank(), panel.grid = element_blank())
     plotly_clean(ggplotly(p, tooltip = "text"))
@@ -1157,10 +1144,8 @@ server <- function(input, output, session) {
       ),
       layout_columns(
         col_widths = breakpoints(sm = 12, md = 6),
-        plotlyOutput("player_zone",     height = "340px"),
-        plotlyOutput("player_arsenal",  height = "340px"),
-        plotlyOutput("player_release",  height = "340px"),
-        plotlyOutput("player_outcomes", height = "340px")
+        plotlyOutput("player_zone",     height = "360px"),
+        plotlyOutput("player_movement", height = "360px")
       )
     )
   })
@@ -1191,67 +1176,30 @@ server <- function(input, output, session) {
     plotly_clean(ggplotly(p, tooltip = "text"))
   })
 
-  output$player_arsenal <- renderPlotly({
-    d <- player_fdata()
+  output$player_movement <- renderPlotly({
+    d <- player_fdata() %>%
+      filter(!is.na(HorzBreak), !is.na(InducedVertBreak))
     req(nrow(d) > 0)
-    ds <- d %>%
-      group_by(TaggedPitchType) %>%
-      summarise(n=n(), avg_spd=round(mean(RelSpeed,na.rm=TRUE),1),
-                avg_spin=round(mean(SpinRate,na.rm=TRUE),0), .groups="drop") %>%
-      mutate(pct = n / sum(n))
-    plot_ly(ds,
-      labels=~TaggedPitchType, values=~n, type="pie", hole=0.5,
-      marker=list(colors=unname(PITCH_COLORS[ds$TaggedPitchType])),
-      text=~paste0(TaggedPitchType,"<br>",scales::percent(pct,1),"<br>",avg_spd," mph"),
-      hoverinfo="text", textinfo="label+percent"
-    ) %>% layout(title=list(text="Pitch Mix"), showlegend=FALSE,
-                  paper_bgcolor="white", plot_bgcolor="white",
-                  font=list(color="#0a1628"))
-  })
-
-  output$player_release <- renderPlotly({
-    d <- player_fdata()
-    req(nrow(d) > 0)
-    p <- ggplot(d, aes(x=RelSide, y=RelHeight, color=TaggedPitchType)) +
-      geom_point(alpha=0.5, size=1.5) +
-      stat_ellipse(aes(group=TaggedPitchType), linewidth=0.8) +
-      scale_color_manual(values=PITCH_COLORS) +
-      labs(title="Release Point",
-           subtitle="Tighter clusters = more consistent",
-           x="Horizontal (ft)", y="Height (ft)", color=NULL) +
-      theme_seagulls()
-    plotly_clean(ggplotly(p, tooltip=c("x","y","colour")))
-  })
-
-  output$player_outcomes <- renderPlotly({
-    d <- player_fdata()
-    req(nrow(d) > 0)
-    outcome_bucket <- function(call) {
-      case_when(
-        call %in% c("BallCalled","BallinDirt","HitByPitch") ~ "Ball",
-        call == "StrikeCalled"  ~ "Called Strike",
-        call %in% c("FoulBallNotFieldable","FoulBallFieldable") ~ "Foul",
-        call == "StrikeSwinging" ~ "Whiff",
-        call == "InPlay"         ~ "In Play",
-        TRUE                     ~ "Other"
-      )
-    }
-    outcome_colors <- c(Ball="#ADB5BD",`Called Strike`="#457B9D",
-                         Foul="#E9C46A",Whiff="#E63946",`In Play`="#2DC653")
-    ds <- d %>%
-      mutate(Outcome=outcome_bucket(PitchCall), csw=csw_pct(PitchCall)) %>%
-      count(TaggedPitchType, Outcome) %>%
-      group_by(TaggedPitchType) %>%
-      mutate(prop=n/sum(n)) %>% ungroup()
-    p <- ggplot(ds, aes(x=TaggedPitchType, y=prop, fill=Outcome,
-        text=paste0(Outcome,": ",scales::percent(prop,1)))) +
-      geom_col(position="fill") +
-      scale_fill_manual(values=outcome_colors) +
-      scale_y_continuous(labels=scales::percent_format()) +
-      coord_flip() +
-      labs(title="Pitch Outcomes", x=NULL, y=NULL, fill=NULL) +
-      theme_seagulls()
-    plotly_clean(ggplotly(p, tooltip="text"))
+    rings <- bind_rows(lapply(c(6, 12, 18), ring_df))
+    p <- ggplot(d, aes(x = HorzBreak, y = InducedVertBreak,
+        color = TaggedPitchType,
+        text = paste0(TaggedPitchType, "<br>IVB: ", round(InducedVertBreak, 1),
+                      " in<br>HB: ", round(HorzBreak, 1), " in")
+      )) +
+      geom_path(data = rings, aes(x = x, y = y, group = r),
+                inherit.aes = FALSE, color = "#E2E8F0", linewidth = 0.4) +
+      geom_hline(yintercept = 0, color = "#CBD5E1", linewidth = 0.4) +
+      geom_vline(xintercept = 0, color = "#CBD5E1", linewidth = 0.4) +
+      geom_point(alpha = 0.7, size = 2.5) +
+      scale_color_manual(values = PITCH_COLORS, drop = TRUE) +
+      coord_fixed(xlim = c(-24, 24), ylim = c(-24, 24)) +
+      labs(title = "Movement Profile",
+           subtitle = "Pitcher's-hand view — rings at 6\", 12\", 18\"",
+           x = "Horizontal Break (in)", y = "Induced Vert Break (in)",
+           color = NULL) +
+      theme_seagulls() +
+      theme(panel.grid = element_blank())
+    plotly_clean(ggplotly(p, tooltip = "text"))
   })
 
   # ── Player: hitter section ────────────────────────────────────────────────
@@ -1361,10 +1309,9 @@ server <- function(input, output, session) {
                   tooltip_text = "How often you swung at pitches outside the strike zone — lower means better pitch recognition.")
       ),
       layout_columns(
-        col_widths = breakpoints(sm = 12, md = 4),
+        col_widths = breakpoints(sm = 12, md = 6),
         plotlyOutput("player_spray",       height = "360px"),
-        plotlyOutput("player_swing_zones", height = "360px"),
-        plotlyOutput("player_hit_types",   height = "360px")
+        plotlyOutput("player_swing_zones", height = "360px")
       )
     )
   })
@@ -1373,21 +1320,20 @@ server <- function(input, output, session) {
     d <- player_fdata() %>%
       filter(!is.na(Direction), !is.na(Distance),
              PlayResult %in% c("Single","Double","Triple","HomeRun","Out")) %>%
-      mutate(spray_x = Distance * sin(Direction * pi / 180),
-             spray_y = Distance * cos(Direction * pi / 180))
+      mutate(
+        spray_x = Distance * sin(Direction * pi / 180),
+        spray_y = Distance * cos(Direction * pi / 180),
+        ev_label = ifelse(is.na(ExitSpeed), "",
+                          paste0("<br>EV: ", round(ExitSpeed, 1), " mph"))
+      )
     req(nrow(d) > 0)
     hit_colors <- c(Single = "#2DC653", Double = "#F5C518",
                     Triple = "#FF8C00", HomeRun = "#E63946", Out = "#AAAAAA")
+    outline <- field_outline_df()
     p <- ggplot(d, aes(x = spray_x, y = spray_y, color = PlayResult,
-        text = paste0(PlayResult, "<br>", round(Distance, 0), " ft"))) +
-      annotate("segment", x = 0, xend = -233, y = 0, yend = 233,
-               color = "gray70", linewidth = 0.5) +
-      annotate("segment", x = 0, xend =  233, y = 0, yend = 233,
-               color = "gray70", linewidth = 0.5) +
-      annotate("path",
-        x = 400 * sin(seq(-45, 45, length.out = 100) * pi / 180),
-        y = 400 * cos(seq(-45, 45, length.out = 100) * pi / 180),
-        color = "gray70", linewidth = 0.5) +
+        text = paste0(PlayResult, "<br>", round(Distance, 0), " ft", ev_label))) +
+      geom_path(data = outline, aes(x = x, y = y), inherit.aes = FALSE,
+                color = "gray70", linewidth = 0.5) +
       geom_point(alpha = 0.8, size = 3) +
       scale_color_manual(values = hit_colors) +
       coord_fixed(xlim = c(-350, 350), ylim = c(0, 430)) +
@@ -1438,21 +1384,5 @@ server <- function(input, output, session) {
     plotly_clean(ggplotly(p, tooltip = c("x","y","label")))
   })
 
-  output$player_hit_types <- renderPlotly({
-    d <- player_fdata() %>% filter(TaggedHitType %in% BIP_TYPES)
-    req(nrow(d) > 0)
-    bip_colors <- c(GroundBall = "#8B4513", FlyBall  = "#457B9D",
-                    LineDrive  = "#2DC653", Popup    = "#AAAAAA")
-    ds <- d %>% count(TaggedHitType) %>% mutate(pct = n / sum(n))
-    p <- ggplot(ds, aes(x = "", y = pct, fill = TaggedHitType,
-        text = paste0(TaggedHitType, ": ", scales::percent(pct, accuracy = 1)))) +
-      geom_col(width = 1) +
-      scale_fill_manual(values = bip_colors) +
-      scale_y_continuous(labels = scales::percent_format()) +
-      coord_flip() +
-      labs(title = "Batted Ball Types", x = NULL, y = "Proportion", fill = NULL) +
-      theme_seagulls() + theme(axis.text.y = element_blank())
-    plotly_clean(ggplotly(p, tooltip = "text"))
-  })
 
 }
