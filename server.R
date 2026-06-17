@@ -260,11 +260,11 @@ server <- function(input, output, session) {
     ) %>%
       layout(
         title      = list(text = "Pitch Arsenal", font = list(color = "#0a1628")),
-        showlegend = TRUE,
+        showlegend = FALSE,
         paper_bgcolor = "white", plot_bgcolor = "white",
         font = list(color = "#0a1628")
       ) %>%
-      plotly_clean()
+      config(displayModeBar = FALSE)
   })
 
   # ── Arsenal overview table — coaches see this first ───────────────────────
@@ -418,7 +418,6 @@ server <- function(input, output, session) {
       geom_hline(yintercept = 0, color = "#CBD5E1", linewidth = 0.5) +
       geom_vline(xintercept = 0, color = "#CBD5E1", linewidth = 0.5) +
       geom_point(alpha = 0.85) +
-      geom_text(vjust = -1, size = 3.5, fontface = "bold", show.legend = FALSE) +
       scale_color_manual(values = cols) +
       scale_size_continuous(range = c(4, 12)) +
       coord_fixed() +
