@@ -780,43 +780,6 @@ server <- function(input, output, session) {
   })
 
   # ── Insight Box ───────────────────────────────────────────────────────────
-  output$insights <- renderUI({
-    req(nrow(fdata()) > 0)
-    d <- fdata()
-
-    spct   <- strike_pct(d$PitchCall)
-    wpct   <- whiff_pct(d$PitchCall)
-    cswpct <- csw_pct(d$PitchCall)
-    cpct   <- chase_pct(d$PlateLocSide, d$PlateLocHeight, d$PitchCall)
-
-    best_whiff <- d %>%
-      group_by(TaggedPitchType) %>%
-      summarise(wp = whiff_pct(PitchCall), n = n(), .groups = "drop") %>%
-      filter(n >= 10) %>%
-      slice_max(wp, n = 1, with_ties = FALSE)
-
-    fmt <- function(x) if (is.na(x)) "—" else scales::percent(x, accuracy = 1)
-
-    tagList(
-      tags$div(
-        style = "background:#f8f9fa; border-radius:8px; padding:12px;
-                 border:1px solid #e0e0e0; font-size:13px;",
-        tags$strong("Key Metrics", style = "display:block; margin-bottom:8px;
-                     font-size:14px; color:#0a1628;"),
-        tags$div(paste0("Strike%: ",  fmt(spct))),
-        tags$div(paste0("Whiff%: ",   fmt(wpct))),
-        tags$div(paste0("CSW%: ",     fmt(cswpct))),
-        tags$div(paste0("Chase%: ",   fmt(cpct))),
-        if (nrow(best_whiff) > 0)
-          tags$div(
-            style = "margin-top:8px; padding-top:8px; border-top:1px solid #ddd;",
-            tags$strong("Best Whiff Pitch: "),
-            paste0(best_whiff$TaggedPitchType, " (", fmt(best_whiff$wp), ")")
-          )
-      )
-    )
-  })
-
   # ── Coach: Pitching glance row ─────────────────────────────────────────────
   output$coach_pitch_glance <- renderUI({
     req(nrow(fdata()) > 0)
