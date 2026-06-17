@@ -77,23 +77,20 @@ server <- function(input, output, session) {
   })
 
   # ── Coach: dynamic filter initialisation ──────────────────────────────────
-  observe({
+  # Runs once on coach login — sets date range and pitch types
+  observeEvent(user_role(), {
     req(user_role() == "coach")
-    req(input$view_mode)
-
-    # Date range bounds from data
     updateDateRangeInput(session, "dates",
       start = min(data$Date, na.rm = TRUE),
       end   = max(data$Date, na.rm = TRUE)
     )
-
-    # Pitch types
     pt <- sort(unique(data$TaggedPitchType[data$TaggedPitchType != "Undefined"]))
-    updatePickerInput(session, "pitch_types",
-      choices = pt, selected = pt
-    )
+    updatePickerInput(session, "pitch_types", choices = pt, selected = pt)
+  }, once = TRUE)
 
-    # Player list switches on view_mode
+  # Updates player dropdown whenever view mode changes
+  observeEvent(input$view_mode, {
+    req(user_role() == "coach")
     players <- if (input$view_mode == "Pitching") {
       sort(unique(data$Pitcher))
     } else {
@@ -137,8 +134,6 @@ server <- function(input, output, session) {
   })
 
   # ── Player filtered reactive ───────────────────────────────────────────────
-  # Defined here; game index and selection live in Task 8.
-  # This reactive is extended in Task 8 with selected_game_index.
   player_fdata_base <- reactive({
     req(user_role() == "player")
     req(user_player_name())
@@ -725,8 +720,6 @@ server <- function(input, output, session) {
   # ── Player: game list and selection ───────────────────────────────────────
   player_games <- reactive({
     req(user_role() == "player")
-    ptype <- user_player_type()
-    col   <- if (ptype == "pitcher") "Pitcher" else "Batter"
     dates <- player_fdata_base() %>%
       pull(Date) %>% unique() %>% sort(decreasing = TRUE)
     dates
@@ -750,13 +743,12 @@ server <- function(input, output, session) {
   selected_game <- reactive({
     g <- player_games()
     req(length(g) > 0)
-    g[[game_index()]]
+    i <- min(game_index(), length(g))
+    g[[i]]
   })
 
   player_fdata <- reactive({
     req(user_role() == "player")
-    ptype <- user_player_type()
-    col   <- if (ptype == "pitcher") "Pitcher" else "Batter"
     player_fdata_base() %>%
       filter(Date == selected_game())
   })
@@ -817,7 +809,9 @@ server <- function(input, output, session) {
 
   # ── Player: pitcher section ───────────────────────────────────────────────
   output$player_pitcher_section <- renderUI({
+    req(user_role() == "player")
     d <- player_fdata()
+    if (nrow(d) == 0) return(div("No data for this game.", style = "color:#888; margin:16px 0;"))
 
     spct  <- strike_pct(d$PitchCall)
     wpct  <- whiff_pct(d$PitchCall)
@@ -930,7 +924,9 @@ server <- function(input, output, session) {
 
   # ── Player: hitter section ────────────────────────────────────────────────
   output$player_hitter_section <- renderUI({
+    req(user_role() == "player")
     d <- player_fdata()
+    if (nrow(d) == 0) return(div("No data for this game.", style = "color:#888; margin:16px 0;"))
 
     d_ip <- d %>% filter(PitchCall == "InPlay", !is.na(ExitSpeed))
     avg_ev <- mean(d_ip$ExitSpeed, na.rm = TRUE)
