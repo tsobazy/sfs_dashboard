@@ -3,3 +3,13 @@
 .RData
 .Ruserdata
 credentials.sqlite
+
+# OAuth token cache
+.secrets/
+
+# Downloaded game CSVs (raw player data — keep off git)
+data/game_csvs/
+!data/game_csvs/.gitkeep
+
+# Local environment (contains Drive folder ID)
+.Renviron
