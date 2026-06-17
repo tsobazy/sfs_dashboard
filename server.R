@@ -301,6 +301,7 @@ server <- function(input, output, session) {
       group_by(TaggedPitchType) %>%
       summarise(
         avg_spd  = mean(RelSpeed,  na.rm = TRUE),
+        max_spd  = max(RelSpeed,   na.rm = TRUE),
         avg_spin = mean(SpinRate,  na.rm = TRUE),
         .groups  = "drop"
       ) %>%
@@ -313,9 +314,14 @@ server <- function(input, output, session) {
       geom_col(width = 0.6) +
       geom_text(aes(label = round(avg_spd, 1)),
                 hjust = 1.1, color = "white", fontface = "bold", size = 3.5) +
+      geom_point(aes(x = max_spd), shape = 23, size = 3.5,
+                 fill = "white", color = "#0a1628", stroke = 1) +
+      geom_text(aes(x = max_spd, label = paste0("Top: ", round(max_spd, 1))),
+                hjust = -0.15, color = "#0a1628", fontface = "bold", size = 3.2) +
       scale_fill_manual(values = PITCH_COLORS) +
-      scale_x_continuous(expand = expansion(mult = c(0, 0.05))) +
-      labs(x = "Avg Velocity (mph)", y = NULL, title = "Avg Velocity") +
+      scale_x_continuous(expand = expansion(mult = c(0, 0.18))) +
+      labs(x = "Avg Velocity (mph)", y = NULL, title = "Avg Velocity",
+           caption = "◊ marker = top velocity") +
       theme_seagulls() + theme(legend.position = "none")
 
     p_spin <- ggplot(d, aes(
