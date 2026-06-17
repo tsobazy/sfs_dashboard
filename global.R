@@ -31,6 +31,30 @@ PITCH_COLORS <- c(
   Undefined        = "#AAAAAA"
 )
 
+PITCH_CATEGORY_MAP <- c(
+  FourSeamFastBall = "Fastball",      Fastball        = "Fastball",
+  Sinker           = "Fastball",      TwoSeamFastBall = "Fastball",
+  Cutter           = "Fastball",
+  Slider           = "Breaking Ball", Curveball       = "Breaking Ball",
+  Sweeper          = "Breaking Ball",
+  ChangeUp         = "Offspeed",      Splitter        = "Offspeed",
+  Undefined        = "Undefined"
+)
+
+data$PitchCategory <- PITCH_CATEGORY_MAP[data$TaggedPitchType]
+data$PitchCategory[is.na(data$PitchCategory)] <- "Undefined"
+
+PITCH_CATEGORY_COLORS <- c(
+  Fastball        = "#E63946",
+  `Breaking Ball` = "#457B9D",
+  Offspeed        = "#2A9D8F",
+  Undefined       = "#AAAAAA"
+)
+
+PITCHER_COUNTS <- c("0-1", "0-2", "1-2", "2-2")
+HITTER_COUNTS  <- c("1-0", "2-0", "2-1", "3-0", "3-1")
+TWO_K_COUNTS   <- c("0-2", "1-2", "2-2", "3-2")
+
 BIP_TYPES <- c("GroundBall", "FlyBall", "LineDrive", "Popup")
 
 # ── Metric Functions ──────────────────────────────────────────────────────────
@@ -111,47 +135,66 @@ source("sync_drive.R")
 coach_sidebar <- function() {
   pt <- sort(unique(data$TaggedPitchType[data$TaggedPitchType != "Undefined"]))
   div(
-    style = "width:280px; min-width:280px; padding:16px; background:#f8f9fa;
-             border-right:1px solid #e0e0e0; height:100vh; overflow-y:auto;",
+    style = "width:280px; min-width:280px; padding:0; background:#015294;
+             height:100vh; overflow-y:auto; display:flex; flex-direction:column;",
+
+    # Navy header — logo + identity
     div(
-      style = "margin-bottom:12px; padding-bottom:12px; border-bottom:1px solid #ddd;",
-      tags$small(textOutput("coach_header", inline = TRUE), style = "color:#555;"),
-      actionButton("logout", "Log Out", class = "btn-sm btn-outline-secondary mt-1")
+      style = "padding:16px 16px 12px 16px;",
+      tags$img(src = "seagulls_logo.png", height = "44px",
+               style = "display:block; margin-bottom:8px;"),
+      tags$div("SAN FRANCISCO SEAGULLS",
+               style = "color:#ffffff; font-size:11px; font-weight:700;
+                        letter-spacing:1px; margin-bottom:10px;"),
+      tags$small(textOutput("coach_header", inline = TRUE),
+                 style = "color:#cfe0f0; display:block; margin-bottom:6px;"),
+      actionButton("logout", "Log Out", class = "btn-sm btn-one-light")
     ),
-    radioGroupButtons(
-      "view_mode", label = "View",
-      choices = c("Pitching", "Hitting"),
-      selected = "Pitching", justified = TRUE, size = "sm"
-    ),
-    hr(),
-    pickerInput(
-      "player", "Player",
-      choices = c("All Players", sort(unique(data$Pitcher))),
-      options = list(`live-search` = TRUE)
-    ),
-    dateRangeInput("dates", "Date Range",
-      start = min(data$Date, na.rm = TRUE),
-      end   = max(data$Date, na.rm = TRUE)
-    ),
-    pickerInput(
-      "pitch_types", "Pitch Types",
-      choices = pt, selected = pt, multiple = TRUE,
-      options = list(`actions-box` = TRUE, `live-search` = TRUE)
-    ),
-    selectInput("count", "Count",
-      choices = c("All","0-0","0-1","0-2","1-0","1-1","1-2",
-                  "2-0","2-1","2-2","3-0","3-1","3-2")
-    ),
-    sliderInput("innings", "Innings", min = 1, max = 9,
-                value = c(1, 9), step = 1),
-    hr(),
-    uiOutput("insights"),
-    hr(),
+
+    # White card — all filters
     div(
-      style = "margin-top:4px;",
-      actionButton("sync_data", "⟳ Sync Data from Drive",
-                   class = "btn-sm btn-outline-primary w-100"),
-      uiOutput("sync_status")
+      style = "background:#ffffff; margin:0 12px 12px 12px; padding:14px;
+               border-radius:10px; flex:1; overflow-y:auto;",
+
+      radioGroupButtons(
+        "view_mode", label = "View",
+        choices = c("Pitching", "Hitting"),
+        selected = "Pitching", justified = TRUE, size = "sm"
+      ),
+      hr(),
+      pickerInput(
+        "player", "Player",
+        choices = c("All Players", sort(unique(data$Pitcher))),
+        options = list(`live-search` = TRUE)
+      ),
+      dateRangeInput("dates", "Date Range",
+        start = min(data$Date, na.rm = TRUE),
+        end   = max(data$Date, na.rm = TRUE)
+      ),
+      pickerInput(
+        "pitch_types", "Pitch Types",
+        choices = pt, selected = pt, multiple = TRUE,
+        options = list(`actions-box` = TRUE, `live-search` = TRUE)
+      ),
+      radioGroupButtons(
+        "pitch_group_mode", label = "Group Pitches By",
+        choices = c("Pitch Type", "Category"),
+        selected = "Pitch Type", justified = TRUE, size = "sm"
+      ),
+      selectInput("count", "Count",
+        choices = c("All", "Pitcher's Count", "Hitter's Count", "2K")
+      ),
+      sliderInput("innings", "Innings", min = 1, max = 9,
+                  value = c(1, 9), step = 1),
+      hr(),
+      uiOutput("insights"),
+      hr(),
+      div(
+        style = "margin-top:4px;",
+        actionButton("sync_data", "⟳ Sync Data from Drive",
+                     class = "btn-sm btn-outline-primary w-100"),
+        uiOutput("sync_status")
+      )
     )
   )
 }
@@ -175,6 +218,7 @@ coach_layout <- function() {
                 column(6, plotlyOutput("plot_zone",    height = "380px")),
                 column(6, plotlyOutput("plot_arsenal", height = "380px"))
               ),
+              fluidRow(column(12, DTOutput("table_movement"))),
               fluidRow(column(12, DTOutput("table_pitchers")))
             ),
             tabPanel(

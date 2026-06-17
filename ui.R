@@ -27,6 +27,13 @@ ui <- secure_app(
       .game-nav { display:flex; align-items:center; gap:12px; margin-bottom:16px; }
       .game-nav .game-label { font-size:15px; font-weight:600; color:#0a1628; }
       .tile-trend { font-size:11px; color:#888; margin-top:4px; display:block; }
+      .btn-one-light {
+        background: transparent; color: #cfe0f0 !important;
+        border: 1px solid #cfe0f0 !important; font-size: 12px;
+      }
+      .btn-one-light:hover {
+        background: rgba(255,255,255,0.15) !important; color: #fff !important;
+      }
     "))),
     uiOutput("main_ui")
   )

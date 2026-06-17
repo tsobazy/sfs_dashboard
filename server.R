@@ -132,11 +132,13 @@ server <- function(input, output, session) {
         Inning <= input$innings[2]
       )
 
-    if (input$count != "All") {
-      parts <- strsplit(input$count, "-")[[1]]
-      b <- as.integer(parts[1]); s <- as.integer(parts[2])
-      d <- d %>% filter(Balls == b, Strikes == s)
-    }
+    d <- switch(input$count,
+      "All"             = d,
+      "Pitcher's Count" = d %>% filter(Count %in% PITCHER_COUNTS),
+      "Hitter's Count"  = d %>% filter(Count %in% HITTER_COUNTS),
+      "2K"              = d %>% filter(Count %in% TWO_K_COUNTS),
+      d
+    )
 
     if (!is.null(input$player) && input$player != "All Players") {
       if (input$view_mode == "Pitching") {
@@ -146,6 +148,13 @@ server <- function(input, output, session) {
       }
     }
     d
+  })
+
+  group_col <- reactive({
+    if (isTRUE(input$pitch_group_mode == "Category")) "PitchCategory" else "TaggedPitchType"
+  })
+  group_colors <- reactive({
+    if (isTRUE(input$pitch_group_mode == "Category")) PITCH_CATEGORY_COLORS else PITCH_COLORS
   })
 
   # ── Player filtered reactive ───────────────────────────────────────────────
@@ -191,33 +200,56 @@ server <- function(input, output, session) {
   # ── Chart 2: Pitch Arsenal Donut ──────────────────────────────────────────
   output$plot_arsenal <- renderPlotly({
     req(nrow(fdata()) > 0)
+    gcol <- group_col()
     d <- fdata() %>%
-      group_by(TaggedPitchType) %>%
+      group_by(.data[[gcol]]) %>%
       summarise(
-        n       = n(),
-        avg_spd = round(mean(RelSpeed, na.rm = TRUE), 1),
-        avg_spin = round(mean(SpinRate, na.rm = TRUE), 0),
-        .groups = "drop"
+        n        = n(),
+        avg_spd  = round(mean(RelSpeed,  na.rm = TRUE), 1),
+        avg_spin = round(mean(SpinRate,  na.rm = TRUE), 0),
+        .groups  = "drop"
       ) %>%
       mutate(pct = n / sum(n))
 
+    cols <- group_colors()
     plot_ly(d,
-      labels = ~TaggedPitchType, values = ~n,
+      labels = d[[gcol]], values = ~n,
       type   = "pie", hole = 0.5,
-      marker = list(colors = unname(PITCH_COLORS[d$TaggedPitchType])),
-      text   = ~paste0(TaggedPitchType, "<br>", n, " pitches (",
+      marker = list(colors = unname(cols[d[[gcol]]])),
+      text   = ~paste0(d[[gcol]], "<br>", n, " pitches (",
                        scales::percent(pct, accuracy = 1), ")<br>",
                        avg_spd, " mph | ", avg_spin, " rpm"),
       hoverinfo = "text",
       textinfo  = "label+percent"
     ) %>%
       layout(
-        title       = list(text = "Pitch Arsenal", font = list(color = "#0a1628")),
-        showlegend  = FALSE,
+        title      = list(text = "Pitch Arsenal", font = list(color = "#0a1628")),
+        showlegend = TRUE,
         paper_bgcolor = "white", plot_bgcolor = "white",
         font = list(color = "#0a1628")
       ) %>%
       plotly_white()
+  })
+
+  # ── IVB / HB movement rundown table ──────────────────────────────────────
+  output$table_movement <- DT::renderDT({
+    req(nrow(fdata()) > 0)
+    gcol <- group_col()
+    d <- fdata() %>%
+      group_by(Group = .data[[gcol]]) %>%
+      summarise(
+        Pitches    = n(),
+        `Avg Velo` = round(mean(RelSpeed,           na.rm = TRUE), 1),
+        `Avg Spin` = round(mean(SpinRate,           na.rm = TRUE), 0),
+        `Avg IVB`  = round(mean(InducedVertBreak,   na.rm = TRUE), 1),
+        `Avg HB`   = round(mean(HorzBreak,          na.rm = TRUE), 1),
+        .groups    = "drop"
+      ) %>%
+      arrange(desc(Pitches))
+
+    DT::datatable(d, rownames = FALSE,
+      options = list(pageLength = 10, dom = "t", ordering = TRUE)
+    )
   })
 
   # ── Chart 3: Velocity & Spin by Pitch Type ────────────────────────────────
