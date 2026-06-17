@@ -127,4 +127,155 @@ server <- function(input, output, session) {
       filter(.data[[col]] == name, TaggedPitchType != "Undefined")
   })
 
+  # ── Chart 1: Strike Zone Map ───────────────────────────────────────────────
+  output$plot_zone <- renderPlotly({
+    req(nrow(fdata()) > 0)
+    p <- ggplot(fdata(), aes(
+        x = PlateLocSide, y = PlateLocHeight,
+        color = TaggedPitchType,
+        text = paste0("Pitcher: ", Pitcher,
+                      "<br>Type: ", TaggedPitchType,
+                      "<br>Speed: ", round(RelSpeed, 1), " mph",
+                      "<br>Result: ", PitchCall)
+      )) +
+      geom_point(alpha = 0.55, size = 2) +
+      annotate("rect",
+        xmin = SZ_LEFT, xmax = SZ_RIGHT,
+        ymin = SZ_BOT,  ymax = SZ_TOP,
+        fill = NA, color = "black", linewidth = 0.8
+      ) +
+      scale_color_manual(values = PITCH_COLORS, drop = FALSE) +
+      scale_x_continuous(limits = c(-2.5, 2.5)) +
+      scale_y_continuous(limits = c(0, 5)) +
+      labs(
+        title    = "Pitch Location Map",
+        subtitle = "Each dot is one pitch. The black box is the strike zone.",
+        color    = NULL, x = "Horizontal (ft)", y = "Height (ft)"
+      ) +
+      theme_seagulls() + coord_fixed()
+    plotly_white(ggplotly(p, tooltip = "text"))
+  })
+
+  # ── Chart 2: Pitch Arsenal Donut ──────────────────────────────────────────
+  output$plot_arsenal <- renderPlotly({
+    req(nrow(fdata()) > 0)
+    d <- fdata() %>%
+      group_by(TaggedPitchType) %>%
+      summarise(
+        n       = n(),
+        avg_spd = round(mean(RelSpeed, na.rm = TRUE), 1),
+        avg_spin = round(mean(SpinRate, na.rm = TRUE), 0),
+        .groups = "drop"
+      ) %>%
+      mutate(pct = n / sum(n))
+
+    plot_ly(d,
+      labels = ~TaggedPitchType, values = ~n,
+      type   = "pie", hole = 0.5,
+      marker = list(colors = unname(PITCH_COLORS[d$TaggedPitchType])),
+      text   = ~paste0(TaggedPitchType, "<br>", n, " pitches (",
+                       scales::percent(pct, accuracy = 1), ")<br>",
+                       avg_spd, " mph | ", avg_spin, " rpm"),
+      hoverinfo = "text",
+      textinfo  = "label+percent"
+    ) %>%
+      layout(
+        title       = list(text = "Pitch Arsenal", font = list(color = "#0a1628")),
+        showlegend  = FALSE,
+        paper_bgcolor = "white", plot_bgcolor = "white",
+        font = list(color = "#0a1628")
+      )
+  })
+
+  # ── Chart 3: Velocity & Spin by Pitch Type ────────────────────────────────
+  output$plot_velo_spin <- renderPlotly({
+    req(nrow(fdata()) > 0)
+    d <- fdata() %>%
+      group_by(TaggedPitchType) %>%
+      summarise(
+        avg_spd  = mean(RelSpeed,  na.rm = TRUE),
+        avg_spin = mean(SpinRate,  na.rm = TRUE),
+        .groups  = "drop"
+      ) %>%
+      arrange(avg_spd)
+
+    cols <- PITCH_COLORS[d$TaggedPitchType]
+
+    p_spd <- ggplot(d, aes(
+        x = avg_spd, y = reorder(TaggedPitchType, avg_spd),
+        fill = TaggedPitchType
+      )) +
+      geom_col() +
+      geom_text(aes(label = round(avg_spd, 1)), hjust = -0.1, size = 3) +
+      scale_fill_manual(values = PITCH_COLORS) +
+      scale_x_continuous(expand = expansion(mult = c(0, 0.15))) +
+      labs(x = "Avg Velocity (mph)", y = NULL, title = "Avg Velocity") +
+      theme_seagulls() + theme(legend.position = "none")
+
+    p_spin <- ggplot(d, aes(
+        x = avg_spin, y = reorder(TaggedPitchType, avg_spd),
+        fill = TaggedPitchType
+      )) +
+      geom_col() +
+      geom_text(aes(label = round(avg_spin, 0)), hjust = -0.1, size = 3) +
+      scale_fill_manual(values = PITCH_COLORS) +
+      scale_x_continuous(expand = expansion(mult = c(0, 0.15))) +
+      labs(x = "Avg Spin Rate (rpm)", y = NULL, title = "Avg Spin Rate") +
+      theme_seagulls() + theme(legend.position = "none")
+
+    subplot(
+      plotly_white(ggplotly(p_spd,  tooltip = "none")),
+      plotly_white(ggplotly(p_spin, tooltip = "none")),
+      nrows = 1, shareY = TRUE, titleX = TRUE
+    ) %>% layout(paper_bgcolor = "white", plot_bgcolor = "white",
+                  font = list(color = "#0a1628"))
+  })
+
+  # ── Chart 4: Pitcher Leaderboard ──────────────────────────────────────────
+  output$table_pitchers <- renderDT({
+    req(nrow(fdata()) > 0)
+    d <- fdata() %>%
+      group_by(Pitcher) %>%
+      summarise(
+        Pitches   = n(),
+        `Strike%` = strike_pct(PitchCall),
+        `Whiff%`  = whiff_pct(PitchCall),
+        `CSW%`    = csw_pct(PitchCall),
+        `Avg Velo` = mean(RelSpeed, na.rm = TRUE),
+        BF = n_distinct(paste(Date, Inning, PAofInning)),
+        K  = sum(KorBB == "Strikeout", na.rm = TRUE),
+        BB = sum(KorBB == "Walk",      na.rm = TRUE),
+        GB_pct = gb_pct(TaggedHitType),
+        .groups = "drop"
+      ) %>%
+      mutate(
+        `K%`  = K  / BF,
+        `BB%` = BB / BF,
+        `GB%` = GB_pct
+      ) %>%
+      left_join(roster_positions[, c("player_name", "position")],
+                by = c("Pitcher" = "player_name")) %>%
+      select(Pitcher, Position = position, Pitches,
+             `Strike%`, `Whiff%`, `CSW%`, `Avg Velo`, `K%`, `BB%`, `GB%`)
+
+    dt <- datatable(d,
+      options = list(
+        pageLength = 10,
+        order      = list(list(4, "desc"))
+      ),
+      rownames = FALSE
+    ) %>%
+      formatPercentage(c("Strike%","Whiff%","CSW%","K%","BB%","GB%"), digits = 1) %>%
+      formatRound("Avg Velo", digits = 1) %>%
+      formatStyle("Strike%",
+        background = styleInterval(c(0.54, 0.65),
+          c("#fde8e8", "white", "#e0f5f2"))
+      ) %>%
+      formatStyle("Whiff%",
+        background = styleInterval(c(0.19, 0.30),
+          c("#fde8e8", "white", "#e0f5f2"))
+      )
+    dt
+  })
+
 }
