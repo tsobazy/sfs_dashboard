@@ -277,4 +277,148 @@ server <- function(input, output, session) {
     dt
   })
 
+  # ── Chart 5: Pitch Movement Scatter ───────────────────────────────────────
+  output$plot_movement <- renderPlotly({
+    req(nrow(fdata()) > 0)
+    d <- fdata() %>%
+      group_by(TaggedPitchType) %>%
+      summarise(
+        HorzBreak       = mean(HorzBreak,        na.rm = TRUE),
+        InducedVertBreak = mean(InducedVertBreak, na.rm = TRUE),
+        n               = n(),
+        .groups = "drop"
+      )
+
+    p <- ggplot(d, aes(
+        x = HorzBreak, y = InducedVertBreak,
+        color = TaggedPitchType, size = n,
+        label = TaggedPitchType
+      )) +
+      geom_hline(yintercept = 0, color = "#cccccc") +
+      geom_vline(xintercept = 0, color = "#cccccc") +
+      geom_point(alpha = 0.85) +
+      geom_text(vjust = -1, size = 3, show.legend = FALSE) +
+      annotate("text", x =  12, y =  18, label = "Rise",            color = "#aaa", size = 3) +
+      annotate("text", x = -12, y =  18, label = "Glove-Side Break", color = "#aaa", size = 3) +
+      annotate("text", x =  12, y = -18, label = "Arm-Side Run",    color = "#aaa", size = 3) +
+      annotate("text", x = -12, y = -18, label = "Drop",            color = "#aaa", size = 3) +
+      scale_color_manual(values = PITCH_COLORS) +
+      scale_size_continuous(range = c(3, 10)) +
+      labs(
+        title = "How Much Each Pitch Moves",
+        x = "Horizontal Break (in)", y = "Induced Vert Break (in)",
+        color = NULL, size = "Pitches"
+      ) +
+      theme_seagulls()
+    plotly_white(ggplotly(p, tooltip = c("label", "x", "y", "size")))
+  })
+
+  # ── Chart 6: Release Point Scatter ────────────────────────────────────────
+  output$plot_release <- renderPlotly({
+    req(nrow(fdata()) > 0)
+    p <- ggplot(fdata(), aes(
+        x = RelSide, y = RelHeight, color = TaggedPitchType
+      )) +
+      geom_point(alpha = 0.5, size = 1.5) +
+      stat_ellipse(aes(group = TaggedPitchType), linewidth = 0.8) +
+      scale_color_manual(values = PITCH_COLORS) +
+      labs(
+        title    = "Release Point",
+        subtitle = "Tighter clusters = more consistent mechanics",
+        x = "Horizontal (ft)", y = "Height (ft)", color = NULL
+      ) +
+      theme_seagulls()
+    plotly_white(ggplotly(p, tooltip = c("x", "y", "colour")))
+  })
+
+  # ── Chart 7: Pitch Outcome Stacked Bar ────────────────────────────────────
+  output$plot_outcomes <- renderPlotly({
+    req(nrow(fdata()) > 0)
+
+    outcome_bucket <- function(call) {
+      case_when(
+        call %in% c("BallCalled","BallinDirt","HitByPitch") ~ "Ball",
+        call == "StrikeCalled"                               ~ "Called Strike",
+        call %in% c("FoulBallNotFieldable","FoulBallFieldable") ~ "Foul",
+        call == "StrikeSwinging"                             ~ "Whiff",
+        call == "InPlay"                                     ~ "In Play",
+        TRUE                                                 ~ "Other"
+      )
+    }
+
+    d <- fdata() %>%
+      mutate(Outcome = outcome_bucket(PitchCall)) %>%
+      group_by(TaggedPitchType) %>%
+      mutate(csw = csw_pct(PitchCall)) %>%
+      ungroup() %>%
+      count(TaggedPitchType, Outcome, csw) %>%
+      group_by(TaggedPitchType) %>%
+      mutate(prop = n / sum(n)) %>%
+      ungroup()
+
+    pt_order <- d %>%
+      distinct(TaggedPitchType, csw) %>%
+      arrange(desc(csw)) %>%
+      pull(TaggedPitchType)
+
+    d$TaggedPitchType <- factor(d$TaggedPitchType, levels = pt_order)
+
+    outcome_colors <- c(
+      Ball = "#ADB5BD", `Called Strike` = "#457B9D",
+      Foul = "#E9C46A", Whiff = "#E63946", `In Play` = "#2DC653"
+    )
+
+    p <- ggplot(d, aes(
+        x = TaggedPitchType, y = prop, fill = Outcome,
+        text = paste0(Outcome, ": ", scales::percent(prop, accuracy = 1))
+      )) +
+      geom_col(position = "fill") +
+      scale_fill_manual(values = outcome_colors) +
+      scale_y_continuous(labels = scales::percent_format()) +
+      coord_flip() +
+      labs(
+        title = "What Happened on Each Pitch Type",
+        x = NULL, y = "Proportion", fill = NULL
+      ) +
+      theme_seagulls()
+    plotly_white(ggplotly(p, tooltip = "text"))
+  })
+
+  # ── Chart 8: Count Heatmap ────────────────────────────────────────────────
+  output$plot_count_heatmap <- renderPlotly({
+    req(nrow(fdata()) > 0)
+
+    counts_grid <- expand.grid(
+      Balls = 0:3, Strikes = 0:2, stringsAsFactors = FALSE
+    )
+
+    d <- fdata() %>%
+      group_by(Balls, Strikes) %>%
+      summarise(spct = strike_pct(PitchCall), n = n(), .groups = "drop") %>%
+      right_join(counts_grid, by = c("Balls", "Strikes")) %>%
+      mutate(
+        label = if_else(is.na(spct), "—", scales::percent(spct, accuracy = 1)),
+        Count = paste0(Balls, "-", Strikes)
+      )
+
+    p <- ggplot(d, aes(
+        x = factor(Strikes), y = factor(Balls, levels = rev(0:3)),
+        fill = spct, label = label
+      )) +
+      geom_tile(color = "white", linewidth = 0.5) +
+      geom_text(size = 4.5, fontface = "bold") +
+      scale_fill_gradient2(
+        low = "#E63946", mid = "white", high = "#2DC653",
+        midpoint = 0.60, na.value = "#f0f0f0",
+        labels = scales::percent_format(), name = "Strike%"
+      ) +
+      labs(
+        title = "Strike% by Count",
+        x = "Strikes", y = "Balls"
+      ) +
+      theme_seagulls() +
+      theme(panel.grid = element_blank(), legend.position = "right")
+    plotly_white(ggplotly(p, tooltip = c("label", "x", "y")))
+  })
+
 }
