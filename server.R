@@ -267,25 +267,31 @@ server <- function(input, output, session) {
       plotly_clean()
   })
 
-  # ── IVB / HB movement rundown table ──────────────────────────────────────
-  output$table_movement <- DT::renderDT({
+  # ── Arsenal overview table — coaches see this first ───────────────────────
+  output$table_arsenal <- DT::renderDT({
     req(nrow(fdata()) > 0)
-    gcol <- group_col()
+    gcol   <- group_col()
+    total  <- nrow(fdata())
     d <- fdata() %>%
-      group_by(Group = .data[[gcol]]) %>%
+      group_by(Pitch = .data[[gcol]]) %>%
       summarise(
-        Pitches    = n(),
+        `Usage%`   = scales::percent(n() / total, accuracy = 1),
         `Avg Velo` = round(mean(RelSpeed,           na.rm = TRUE), 1),
+        `Max Velo` = round(max(RelSpeed,            na.rm = TRUE), 1),
         `Avg Spin` = round(mean(SpinRate,           na.rm = TRUE), 0),
         `Avg IVB`  = round(mean(InducedVertBreak,   na.rm = TRUE), 1),
         `Avg HB`   = round(mean(HorzBreak,          na.rm = TRUE), 1),
         .groups    = "drop"
       ) %>%
-      arrange(desc(Pitches))
+      arrange(desc(as.numeric(sub("%", "", `Usage%`))))
 
     DT::datatable(d, rownames = FALSE,
-      options = list(pageLength = 10, dom = "t", ordering = TRUE)
-    )
+      options = list(pageLength = 15, dom = "t", ordering = TRUE),
+      class   = "compact stripe"
+    ) %>%
+      DT::formatStyle("Avg Velo",
+        background = DT::styleInterval(c(78, 85), c("#FEF3C7", "white", "#DBEAFE"))
+      )
   })
 
   # ── Chart 3: Velocity & Spin by Pitch Type ────────────────────────────────

@@ -243,25 +243,26 @@ coach_layout <- function() {
             id = "pitch_sub_tabs",
             tabPanel(
               "Overview",
-              fluidRow(
-                column(6, plotlyOutput("plot_zone",    height = "380px")),
-                column(6, plotlyOutput("plot_arsenal", height = "380px"))
-              ),
-              fluidRow(column(12, DTOutput("table_movement"))),
+              uiOutput("coach_pitch_glance"),
+              fluidRow(column(12, DTOutput("table_arsenal"))),
+              fluidRow(column(12, plotlyOutput("plot_movement", height = "440px"))),
               fluidRow(column(12, DTOutput("table_pitchers")))
             ),
             tabPanel(
               "Detail",
               fluidRow(
+                column(6, plotlyOutput("plot_zone",    height = "380px")),
+                column(6, plotlyOutput("plot_arsenal", height = "380px"))
+              ),
+              fluidRow(
                 column(12, plotlyOutput("plot_velo_spin", height = "340px"))
               ),
               fluidRow(
-                column(6, plotlyOutput("plot_movement", height = "380px")),
-                column(6, plotlyOutput("plot_release",  height = "380px"))
+                column(6, plotlyOutput("plot_release",       height = "380px")),
+                column(6, plotlyOutput("plot_outcomes",      height = "380px"))
               ),
               fluidRow(
-                column(6, plotlyOutput("plot_outcomes",      height = "360px")),
-                column(6, plotlyOutput("plot_count_heatmap", height = "360px"))
+                column(12, plotlyOutput("plot_count_heatmap", height = "360px"))
               )
             )
           )
