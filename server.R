@@ -41,23 +41,23 @@ server <- function(input, output, session) {
   )
 
   user_role <- reactive({
-    req(result_auth()$user_auth)
-    result_auth()$role
+    req(result_auth$user_auth)
+    result_auth$role
   })
 
   user_player_name <- reactive({
-    req(result_auth()$user_auth)
-    result_auth()$player_name
+    req(result_auth$user_auth)
+    result_auth$player_name
   })
 
   user_player_type <- reactive({
-    req(result_auth()$user_auth)
-    result_auth()$player_type
+    req(result_auth$user_auth)
+    result_auth$player_type
   })
 
   user_display_name <- reactive({
-    req(result_auth()$user_auth)
-    result_auth()$display_name
+    req(result_auth$user_auth)
+    result_auth$display_name
   })
 
   # ── Coach header ──────────────────────────────────────────────────────────
