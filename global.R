@@ -23,11 +23,12 @@ SZ_BOT   <-  1.50
 SZ_TOP   <-  3.50
 
 PITCH_COLORS <- c(
-  FourSeamFastBall = "#E63946", Sinker          = "#F4A261",
-  ChangeUp         = "#2A9D8F", Curveball       = "#457B9D",
-  Slider           = "#6A4C93", Sweeper         = "#9B2226",
-  Cutter           = "#E9C46A", Splitter        = "#264653",
-  Fastball         = "#E76F51", TwoSeamFastBall = "#F4D35E",
+  FourSeamFastBall = "#D22D49", Fastball        = "#D22D49",
+  Sinker           = "#FE9D00", TwoSeamFastBall = "#FE9D00",
+  Cutter           = "#933F2C",
+  ChangeUp         = "#1DBE3A", Splitter        = "#3BACAC",
+  Slider           = "#EEE716", Sweeper         = "#DDB33A",
+  Curveball        = "#00D1ED",
   Undefined        = "#AAAAAA"
 )
 
@@ -45,9 +46,9 @@ data$PitchCategory <- PITCH_CATEGORY_MAP[data$TaggedPitchType]
 data$PitchCategory[is.na(data$PitchCategory)] <- "Undefined"
 
 PITCH_CATEGORY_COLORS <- c(
-  Fastball        = "#E63946",
-  `Breaking Ball` = "#457B9D",
-  Offspeed        = "#2A9D8F",
+  Fastball        = "#D22D49",
+  `Breaking Ball` = "#00D1ED",
+  Offspeed        = "#1DBE3A",
   Undefined       = "#AAAAAA"
 )
 
@@ -105,25 +106,55 @@ gb_pct <- function(ht) {
 
 # ── Theme ─────────────────────────────────────────────────────────────────────
 theme_seagulls <- function() {
-  theme_minimal(base_size = 13) +
+  theme_minimal(base_size = 12) +
   theme(
-    plot.background   = element_rect(fill = "white", color = NA),
-    panel.background  = element_rect(fill = "white", color = NA),
-    panel.grid.major  = element_line(color = "#e8e8e8"),
-    panel.grid.minor  = element_blank(),
-    plot.title        = element_text(face = "bold", size = 14, color = "#0a1628"),
-    plot.subtitle     = element_text(size = 11, color = "#555555"),
-    axis.text         = element_text(color = "#333333"),
-    legend.background = element_rect(fill = "white"),
-    strip.background  = element_rect(fill = "#f0f0f0")
+    plot.background    = element_rect(fill = "white", color = NA),
+    panel.background   = element_rect(fill = "white", color = NA),
+    panel.grid.major.x = element_blank(),
+    panel.grid.major.y = element_line(color = "#F1F5F9"),
+    panel.grid.minor   = element_blank(),
+    plot.title         = element_text(face = "bold", size = 13, color = "#1A202C"),
+    plot.subtitle      = element_text(size = 10, color = "#64748B"),
+    axis.text          = element_text(color = "#64748B", size = 10),
+    axis.title         = element_text(color = "#64748B", size = 11),
+    legend.background  = element_rect(fill = "white"),
+    strip.background   = element_rect(fill = "#F1F5F9")
   )
 }
 
-plotly_white <- function(p) {
-  p %>% layout(
-    paper_bgcolor = "white",
-    plot_bgcolor  = "white",
-    font          = list(color = "#0a1628")
+plotly_clean <- function(p) {
+  p %>%
+    layout(
+      paper_bgcolor = "white",
+      plot_bgcolor  = "white",
+      font = list(color = "#1A202C")
+    ) %>%
+    config(displayModeBar = FALSE)
+}
+
+ring_df <- function(r, n = 200) {
+  theta <- seq(0, 2 * pi, length.out = n)
+  data.frame(x = r * cos(theta), y = r * sin(theta), r = r)
+}
+
+spray_xy <- function(bearing_deg, distance_ft) {
+  rad <- bearing_deg * pi / 180
+  list(x = distance_ft * sin(rad), y = distance_ft * cos(rad))
+}
+
+field_outline_df <- function(foul_distance = 330, cf_distance = 400) {
+  lf_x <- -foul_distance * sin(pi / 4)
+  lf_y <-  foul_distance * cos(pi / 4)
+  rf_x <-  foul_distance * sin(pi / 4)
+  rf_y <-  foul_distance * cos(pi / 4)
+  arc_a  <- seq(-pi / 4, pi / 4, length.out = 100)
+  arc_r2 <- foul_distance + (cf_distance - foul_distance) *
+    (1 - abs(arc_a) / (pi / 4))
+  arc_x <- arc_r2 * sin(arc_a)
+  arc_y <- arc_r2 * cos(arc_a)
+  data.frame(
+    x = c(0, lf_x, arc_x, rf_x, 0),
+    y = c(0, lf_y, arc_y, rf_y, 0)
   )
 }
 

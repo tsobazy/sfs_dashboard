@@ -200,7 +200,7 @@ server <- function(input, output, session) {
         color    = NULL, x = "Horizontal (ft)", y = "Height (ft)"
       ) +
       theme_seagulls()
-    plotly_white(ggplotly(p, tooltip = "text"))
+    plotly_clean(ggplotly(p, tooltip = "text"))
   })
 
   # ── Chart 2: Pitch Arsenal Donut ──────────────────────────────────────────
@@ -234,7 +234,7 @@ server <- function(input, output, session) {
         paper_bgcolor = "white", plot_bgcolor = "white",
         font = list(color = "#0a1628")
       ) %>%
-      plotly_white()
+      plotly_clean()
   })
 
   # ── IVB / HB movement rundown table ──────────────────────────────────────
@@ -295,8 +295,8 @@ server <- function(input, output, session) {
       theme_seagulls() + theme(legend.position = "none")
 
     subplot(
-      plotly_white(ggplotly(p_spd,  tooltip = "none")),
-      plotly_white(ggplotly(p_spin, tooltip = "none")),
+      plotly_clean(ggplotly(p_spd,  tooltip = "none")),
+      plotly_clean(ggplotly(p_spin, tooltip = "none")),
       nrows = 1, shareY = TRUE, titleX = TRUE
     ) %>% layout(paper_bgcolor = "white", plot_bgcolor = "white",
                   font = list(color = "#0a1628"))
@@ -383,7 +383,7 @@ server <- function(input, output, session) {
         color = NULL, size = "Pitches"
       ) +
       theme_seagulls()
-    plotly_white(ggplotly(p, tooltip = c("label", "x", "y", "size")))
+    plotly_clean(ggplotly(p, tooltip = c("label", "x", "y", "size")))
   })
 
   # ── Chart 6: Release Point Scatter ────────────────────────────────────────
@@ -407,7 +407,7 @@ server <- function(input, output, session) {
       ) +
       theme_seagulls() +
       theme(legend.position = if (n_distinct(fdata()$TaggedPitchType) <= 1) "none" else "right")
-    plotly_white(ggplotly(p, tooltip = c("x", "y", "colour")))
+    plotly_clean(ggplotly(p, tooltip = c("x", "y", "colour")))
   })
 
   # ── Chart 7: Pitch Outcome Stacked Bar ────────────────────────────────────
@@ -460,7 +460,7 @@ server <- function(input, output, session) {
         x = NULL, y = "Proportion", fill = NULL
       ) +
       theme_seagulls()
-    plotly_white(ggplotly(p, tooltip = "text"))
+    plotly_clean(ggplotly(p, tooltip = "text"))
   })
 
   # ── Chart 8: Count Heatmap ────────────────────────────────────────────────
@@ -497,7 +497,7 @@ server <- function(input, output, session) {
       ) +
       theme_seagulls() +
       theme(panel.grid = element_blank(), legend.position = "right")
-    plotly_white(ggplotly(p, tooltip = c("label", "x", "y")))
+    plotly_clean(ggplotly(p, tooltip = c("label", "x", "y")))
   })
 
   # ── Chart 9: Spray Chart ──────────────────────────────────────────────────
@@ -548,7 +548,7 @@ server <- function(input, output, session) {
       ) +
       theme_seagulls() +
       theme(axis.text = element_blank(), panel.grid = element_blank())
-    plotly_white(ggplotly(p, tooltip = "text"))
+    plotly_clean(ggplotly(p, tooltip = "text"))
   })
 
   # ── Chart 10: Exit Velocity vs Launch Angle ────────────────────────────────
@@ -586,7 +586,7 @@ server <- function(input, output, session) {
         x = "Launch Angle (°)", y = "Exit Velocity (mph)", color = NULL
       ) +
       theme_seagulls()
-    plotly_white(ggplotly(p, tooltip = "text"))
+    plotly_clean(ggplotly(p, tooltip = "text"))
   })
 
   # ── Chart 11: Batter Leaderboard ──────────────────────────────────────────
@@ -689,7 +689,7 @@ server <- function(input, output, session) {
         x = NULL, y = NULL
       ) +
       theme_seagulls() + theme(panel.grid = element_blank())
-    plotly_white(ggplotly(p, tooltip = c("x","y","label")))
+    plotly_clean(ggplotly(p, tooltip = c("x","y","label")))
   })
 
   # ── Chart 13: Hit Type Distribution ───────────────────────────────────────
@@ -713,7 +713,7 @@ server <- function(input, output, session) {
         x = NULL, y = "Proportion", fill = NULL
       ) +
       theme_seagulls()
-    plotly_white(ggplotly(p, tooltip = c("x","fill","count")))
+    plotly_clean(ggplotly(p, tooltip = c("x","fill","count")))
   })
 
   # ── Chart 14: Pitch Vulnerability Heatmap ─────────────────────────────────
@@ -748,7 +748,7 @@ server <- function(input, output, session) {
       theme_seagulls() +
       theme(axis.text.x = element_text(angle = 30, hjust = 1),
             panel.grid  = element_blank())
-    plotly_white(ggplotly(p, tooltip = c("x","y","label")))
+    plotly_clean(ggplotly(p, tooltip = c("x","y","label")))
   })
 
   # ── Insight Box ───────────────────────────────────────────────────────────
@@ -1151,7 +1151,7 @@ server <- function(input, output, session) {
            subtitle = "Catcher's-eye view — you're looking out toward the pitcher",
            x = "Horizontal (ft)", y = "Height (ft)", color = NULL) +
       theme_seagulls()
-    plotly_white(ggplotly(p, tooltip = "text"))
+    plotly_clean(ggplotly(p, tooltip = "text"))
   })
 
   output$player_arsenal <- renderPlotly({
@@ -1183,7 +1183,7 @@ server <- function(input, output, session) {
            subtitle="Tighter clusters = more consistent",
            x="Horizontal (ft)", y="Height (ft)", color=NULL) +
       theme_seagulls()
-    plotly_white(ggplotly(p, tooltip=c("x","y","colour")))
+    plotly_clean(ggplotly(p, tooltip=c("x","y","colour")))
   })
 
   output$player_outcomes <- renderPlotly({
@@ -1214,7 +1214,7 @@ server <- function(input, output, session) {
       coord_flip() +
       labs(title="Pitch Outcomes", x=NULL, y=NULL, fill=NULL) +
       theme_seagulls()
-    plotly_white(ggplotly(p, tooltip="text"))
+    plotly_clean(ggplotly(p, tooltip="text"))
   })
 
   # ── Player: hitter section ────────────────────────────────────────────────
@@ -1357,7 +1357,7 @@ server <- function(input, output, session) {
       labs(title = "Where the Ball Was Hit", x = NULL, y = NULL, color = NULL) +
       theme_seagulls() +
       theme(axis.text = element_blank(), panel.grid = element_blank())
-    plotly_white(ggplotly(p, tooltip = "text"))
+    plotly_clean(ggplotly(p, tooltip = "text"))
   })
 
   output$player_swing_zones <- renderPlotly({
@@ -1398,7 +1398,7 @@ server <- function(input, output, session) {
       labs(title = "Swing Rates by Zone",
            subtitle = "Catcher's-eye view", x = NULL, y = NULL) +
       theme_seagulls() + theme(panel.grid = element_blank())
-    plotly_white(ggplotly(p, tooltip = c("x","y","label")))
+    plotly_clean(ggplotly(p, tooltip = c("x","y","label")))
   })
 
   output$player_hit_types <- renderPlotly({
@@ -1415,7 +1415,7 @@ server <- function(input, output, session) {
       coord_flip() +
       labs(title = "Batted Ball Types", x = NULL, y = "Proportion", fill = NULL) +
       theme_seagulls() + theme(axis.text.y = element_blank())
-    plotly_white(ggplotly(p, tooltip = "text"))
+    plotly_clean(ggplotly(p, tooltip = "text"))
   })
 
 }
