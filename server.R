@@ -385,40 +385,45 @@ server <- function(input, output, session) {
     dt
   })
 
-  # ── Chart 5: Pitch Movement Scatter ───────────────────────────────────────
+  # ── Movement Profile — Savant-style with reference rings ──────────────────
   output$plot_movement <- renderPlotly({
     req(nrow(fdata()) > 0)
+    gcol <- group_col()
     d <- fdata() %>%
-      group_by(TaggedPitchType) %>%
+      group_by(.data[[gcol]]) %>%
       summarise(
-        HorzBreak       = mean(HorzBreak,        na.rm = TRUE),
+        HorzBreak        = mean(HorzBreak,        na.rm = TRUE),
         InducedVertBreak = mean(InducedVertBreak, na.rm = TRUE),
-        n               = n(),
-        .groups = "drop"
+        n                = n(),
+        .groups          = "drop"
       )
+
+    rings <- dplyr::bind_rows(lapply(c(6, 12, 18), ring_df))
+    cols  <- group_colors()
 
     p <- ggplot(d, aes(
         x = HorzBreak, y = InducedVertBreak,
-        color = TaggedPitchType, size = n,
-        label = TaggedPitchType
+        color = .data[[gcol]], size = n,
+        label = .data[[gcol]]
       )) +
-      geom_hline(yintercept = 0, color = "#cccccc") +
-      geom_vline(xintercept = 0, color = "#cccccc") +
+      geom_path(data = rings, aes(x = x, y = y, group = r),
+                color = "#D1D5DB", linetype = "dashed", linewidth = 0.4,
+                inherit.aes = FALSE) +
+      geom_hline(yintercept = 0, color = "#CBD5E1", linewidth = 0.5) +
+      geom_vline(xintercept = 0, color = "#CBD5E1", linewidth = 0.5) +
       geom_point(alpha = 0.85) +
-      geom_text(vjust = -1, size = 3, show.legend = FALSE) +
-      annotate("text", x =  12, y =  18, label = "Rise",            color = "#aaa", size = 3) +
-      annotate("text", x = -12, y =  18, label = "Glove-Side Break", color = "#aaa", size = 3) +
-      annotate("text", x =  12, y = -18, label = "Arm-Side Run",    color = "#aaa", size = 3) +
-      annotate("text", x = -12, y = -18, label = "Drop",            color = "#aaa", size = 3) +
-      scale_color_manual(values = PITCH_COLORS) +
-      scale_size_continuous(range = c(3, 10)) +
+      geom_text(vjust = -1, size = 3.5, fontface = "bold", show.legend = FALSE) +
+      scale_color_manual(values = cols) +
+      scale_size_continuous(range = c(4, 12)) +
+      coord_fixed() +
       labs(
-        title    = "How Much Each Pitch Moves",
+        title    = "Movement Profile",
         subtitle = "Pitcher's-eye view — like the TV camera behind the mound",
         x = "Horizontal Break (in)", y = "Induced Vert Break (in)",
         color = NULL, size = "Pitches"
       ) +
-      theme_seagulls()
+      theme_seagulls() +
+      theme(legend.position = if (n_distinct(d[[gcol]]) <= 1) "none" else "right")
     plotly_clean(ggplotly(p, tooltip = c("label", "x", "y", "size")))
   })
 
