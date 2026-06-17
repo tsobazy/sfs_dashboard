@@ -298,11 +298,11 @@ server <- function(input, output, session) {
       formatRound("Avg Velo", digits = 1) %>%
       formatStyle("Strike%",
         background = styleInterval(c(0.54, 0.65),
-          c("#fde8e8", "white", "#e0f5f2"))
+          c("#fff3e0", "white", "#e0f5f2"))
       ) %>%
       formatStyle("Whiff%",
         background = styleInterval(c(0.19, 0.30),
-          c("#fde8e8", "white", "#e0f5f2"))
+          c("#fff3e0", "white", "#e0f5f2"))
       )
     dt
   })
@@ -583,7 +583,7 @@ server <- function(input, output, session) {
       formatRound("Avg EV", digits = 1) %>%
       formatStyle("Avg EV",
         background = styleInterval(c(82, 92),
-          c("#fde8e8", "white", "#e0f5f2"))
+          c("#fff3e0", "white", "#e0f5f2"))
       )
   })
 
