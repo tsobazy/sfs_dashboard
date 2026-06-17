@@ -9,11 +9,21 @@ library(scales)
 source("roster.R")
 
 # Stat tile helper for player scorecard
-stat_tile <- function(label, value_str, css_class = "tile-neutral") {
+stat_tile <- function(label, value_str, css_class = "tile-neutral", trend = NULL,
+                      tooltip_text = NULL) {
+  label_node <- if (!is.null(tooltip_text)) {
+    tagList(label, " ",
+            tags$abbr(title = tooltip_text,
+                      style = "cursor:help; color:#aaa; font-size:10px; text-decoration:none;",
+                      "?"))
+  } else {
+    label
+  }
   div(
     class = "value-tile",
-    div(class = "tile-label", label),
-    div(class = paste("tile-value", css_class), value_str)
+    div(class = "tile-label", label_node),
+    div(class = paste("tile-value", css_class), value_str),
+    if (!is.null(trend)) trend
   )
 }
 
@@ -830,6 +840,17 @@ server <- function(input, output, session) {
       filter(Date == selected_game())
   })
 
+  # Last 5 games before the selected game — used for trend baseline
+  player_recent_fdata <- reactive({
+    req(user_role() == "player")
+    all_dates  <- player_fdata_base() %>% pull(Date) %>% unique() %>% sort(decreasing = TRUE)
+    sel        <- selected_game()
+    past_dates <- head(all_dates[all_dates < sel], 5L)
+    if (length(past_dates) == 0L)
+      return(player_fdata_base() %>% filter(FALSE))
+    player_fdata_base() %>% filter(Date %in% past_dates)
+  })
+
   # ── Player: top-level UI ─────────────────────────────────────────────────
   output$player_ui <- renderUI({
     req(user_role() == "player")
@@ -897,6 +918,28 @@ server <- function(input, output, session) {
 
     fmt <- function(x) if (is.na(x)) "—" else scales::percent(x, accuracy = 1)
 
+    # Trend baseline from last 5 games
+    d_rec      <- player_recent_fdata()
+    has_recent <- nrow(d_rec) > 0
+
+    mk_trend <- function(curr, base) {
+      if (!has_recent || is.na(curr) || is.na(base))
+        return(tags$small("— first game with data", class = "tile-trend"))
+      diff <- curr - base
+      if (abs(diff) < 0.001)
+        return(tags$small("— stable vs last 5 games", class = "tile-trend"))
+      dir <- if (diff > 0) "↑" else "↓"
+      pts <- round(abs(diff) * 100, 1)
+      tags$small(paste0(dir, " ", pts, " pts vs last 5 games"), class = "tile-trend")
+    }
+
+    spct_base <- if (has_recent) strike_pct(d_rec$PitchCall) else NA_real_
+    wpct_base <- if (has_recent) whiff_pct(d_rec$PitchCall)  else NA_real_
+    cswp_base <- if (has_recent) csw_pct(d_rec$PitchCall)    else NA_real_
+    chsp_base <- if (has_recent) chase_pct(d_rec$PlateLocSide,
+                                           d_rec$PlateLocHeight,
+                                           d_rec$PitchCall)   else NA_real_
+
     # Takeaway sentence
     hi_thr <- c("Strike%" = 0.65, "Whiff%" = 0.30, "CSW%" = 0.28)
     lo_thr <- c("Strike%" = 0.54, "Whiff%" = 0.19, "CSW%" = 0.20)
@@ -932,10 +975,14 @@ server <- function(input, output, session) {
       ),
       layout_columns(
         col_widths = breakpoints(sm = 6, md = 3),
-        stat_tile("Strike%", fmt(spct), tile_class(spct, 0.65, 0.54)),
-        stat_tile("Whiff%",  fmt(wpct), tile_class(wpct, 0.30, 0.19)),
-        stat_tile("CSW%",    fmt(cswp), tile_class(cswp, 0.28, 0.20)),
-        stat_tile("Chase%",  fmt(chsp), tile_class(chsp, 0.30, 0.00))
+        stat_tile("Strike%", fmt(spct), tile_class(spct, 0.65, 0.54),
+                  trend = mk_trend(spct, spct_base)),
+        stat_tile("Whiff%",  fmt(wpct), tile_class(wpct, 0.30, 0.19),
+                  trend = mk_trend(wpct, wpct_base)),
+        stat_tile("CSW%",    fmt(cswp), tile_class(cswp, 0.28, 0.20),
+                  trend = mk_trend(cswp, cswp_base)),
+        stat_tile("Chase%",  fmt(chsp), tile_class(chsp, 0.30, 0.00),
+                  trend = mk_trend(chsp, chsp_base))
       ),
       layout_columns(
         col_widths = breakpoints(sm = 12, md = 6),
@@ -1050,6 +1097,50 @@ server <- function(input, output, session) {
     fmt_ev  <- function(x) if (is.na(x)) "—" else paste0(round(x, 1), " mph")
     fmt_pct <- function(x) if (is.na(x)) "—" else scales::percent(x, accuracy = 1)
 
+    # Trend baseline from last 5 games
+    d_rec      <- player_recent_fdata()
+    has_recent <- nrow(d_rec) > 0
+
+    mk_trend <- function(curr, base) {
+      if (!has_recent || is.na(curr) || is.na(base))
+        return(tags$small("— first game with data", class = "tile-trend"))
+      diff <- curr - base
+      if (abs(diff) < 0.001)
+        return(tags$small("— stable vs last 5 games", class = "tile-trend"))
+      dir <- if (diff > 0) "↑" else "↓"
+      pts <- round(abs(diff) * 100, 1)
+      tags$small(paste0(dir, " ", pts, " pts vs last 5 games"), class = "tile-trend")
+    }
+
+    mk_trend_ev <- function(curr, base) {
+      if (!has_recent || is.na(curr) || is.na(base))
+        return(tags$small("— first game with data", class = "tile-trend"))
+      diff <- curr - base
+      if (abs(diff) < 0.1)
+        return(tags$small("— stable vs last 5 games", class = "tile-trend"))
+      dir <- if (diff > 0) "↑" else "↓"
+      tags$small(paste0(dir, " ", round(abs(diff), 1), " mph vs last 5 games"),
+                 class = "tile-trend")
+    }
+
+    d_rec_ip    <- d_rec %>% filter(PitchCall == "InPlay", !is.na(ExitSpeed))
+    avg_ev_base <- mean(d_rec_ip$ExitSpeed, na.rm = TRUE)
+    hh_base     <- hard_hit_pct(d_rec_ip$ExitSpeed)
+
+    d_rec_zone <- d_rec %>% filter(!is.na(PlateLocSide), !is.na(PlateLocHeight))
+    if (nrow(d_rec_zone) > 0) {
+      in_zone_r       <- d_rec_zone$PlateLocSide  >= SZ_LEFT & d_rec_zone$PlateLocSide  <= SZ_RIGHT &
+                         d_rec_zone$PlateLocHeight >= SZ_BOT  & d_rec_zone$PlateLocHeight <= SZ_TOP
+      swings_r        <- d_rec_zone$PitchCall %in% c("StrikeSwinging","FoulBallNotFieldable",
+                                                       "FoulBallFieldable","InPlay")
+      swing_zone_base <- if (sum(in_zone_r) > 0) sum(in_zone_r & swings_r) / sum(in_zone_r) else NA_real_
+      ooz_r           <- !in_zone_r
+      chase_base      <- if (sum(ooz_r) > 0) sum(ooz_r & swings_r) / sum(ooz_r) else NA_real_
+    } else {
+      swing_zone_base <- NA_real_
+      chase_base      <- NA_real_
+    }
+
     # Takeaway sentence
     first_clause <- if (!is.na(hh) && hh >= 0.40) {
       paste0("You were hitting the ball hard — ", fmt_pct(hh), " hard contact rate")
@@ -1077,10 +1168,14 @@ server <- function(input, output, session) {
       ),
       layout_columns(
         col_widths = breakpoints(sm = 6, md = 3),
-        stat_tile("Avg Exit Velo", fmt_ev(avg_ev),     tile_class(avg_ev,     92,   82)),
-        stat_tile("Hard Hit%",     fmt_pct(hh),         tile_class(hh,         0.40, 0.25)),
-        stat_tile("Zone Swing%",   fmt_pct(swing_zone), tile_class(swing_zone, 0.70, 0.00)),
-        stat_tile("Chase%",        fmt_pct(chase),      tile_class(chase, 0.25, 0.35, hi_good = FALSE))
+        stat_tile("Avg Exit Velo", fmt_ev(avg_ev),     tile_class(avg_ev,     92,   82),
+                  trend = mk_trend_ev(avg_ev, avg_ev_base)),
+        stat_tile("Hard Hit%",     fmt_pct(hh),         tile_class(hh,         0.40, 0.25),
+                  trend = mk_trend(hh, hh_base)),
+        stat_tile("Zone Swing%",   fmt_pct(swing_zone), tile_class(swing_zone, 0.70, 0.00),
+                  trend = mk_trend(swing_zone, swing_zone_base)),
+        stat_tile("Chase%",        fmt_pct(chase),      tile_class(chase, 0.25, 0.35, hi_good = FALSE),
+                  trend = mk_trend(chase, chase_base))
       ),
       layout_columns(
         col_widths = breakpoints(sm = 12, md = 4),

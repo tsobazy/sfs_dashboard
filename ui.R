@@ -26,6 +26,7 @@ ui <- secure_app(
       .tile-neutral { color: #0a1628; }
       .game-nav { display:flex; align-items:center; gap:12px; margin-bottom:16px; }
       .game-nav .game-label { font-size:15px; font-weight:600; color:#0a1628; }
+      .tile-trend { font-size:11px; color:#888; margin-top:4px; display:block; }
     "))),
     uiOutput("main_ui")
   )
