@@ -34,7 +34,10 @@ server <- function(input, output, session) {
 
   # ── Auth ──────────────────────────────────────────────────────────────────
   result_auth <- secure_server(
-    check_credentials = check_credentials(credentials)
+    check_credentials = check_credentials(
+      db         = "credentials.sqlite",
+      passphrase = "seagulls2026_db"
+    )
   )
 
   user_role <- reactive({
