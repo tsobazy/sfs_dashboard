@@ -720,6 +720,80 @@ server <- function(input, output, session) {
     )
   })
 
+  # ── Coach: Pitching glance row ─────────────────────────────────────────────
+  output$coach_pitch_glance <- renderUI({
+    req(nrow(fdata()) > 0)
+    d    <- fdata()
+    spct <- strike_pct(d$PitchCall)
+    wpct <- whiff_pct(d$PitchCall)
+    cswp <- csw_pct(d$PitchCall)
+    gbp  <- gb_pct(d$TaggedHitType)
+    fmt  <- function(x) if (is.na(x)) "—" else scales::percent(x, accuracy = 1)
+
+    best_whiff <- d %>%
+      group_by(TaggedPitchType) %>%
+      summarise(wp = whiff_pct(PitchCall), n = n(), .groups = "drop") %>%
+      filter(n >= 10) %>%
+      slice_max(wp, n = 1, with_ties = FALSE)
+
+    sentence <- if (nrow(best_whiff) > 0 && !is.na(best_whiff$wp))
+      paste0("Best whiff pitch: ", best_whiff$TaggedPitchType,
+             " (", fmt(best_whiff$wp), ")")
+    else NULL
+
+    tagList(
+      div(
+        style = "padding:12px 0 8px;",
+        layout_columns(
+          col_widths = breakpoints(sm = 6, md = 3),
+          stat_tile("Strike%", fmt(spct), tile_class(spct, 0.65, 0.54)),
+          stat_tile("Whiff%",  fmt(wpct), tile_class(wpct, 0.30, 0.19)),
+          stat_tile("CSW%",    fmt(cswp), tile_class(cswp, 0.28, 0.20)),
+          stat_tile("GB%",     fmt(gbp),  tile_class(gbp,  0.45, 0.30))
+        ),
+        if (!is.null(sentence))
+          tags$p(sentence,
+                 style = "font-size:12px; color:#555; margin:2px 0 8px;")
+      )
+    )
+  })
+
+  # ── Coach: Hitting glance row ──────────────────────────────────────────────
+  output$coach_hit_glance <- renderUI({
+    req(nrow(fdata()) > 0)
+    d    <- fdata()
+    d_ip <- d %>% filter(PitchCall == "InPlay", !is.na(ExitSpeed))
+    avg_ev <- mean(d_ip$ExitSpeed, na.rm = TRUE)
+    hh     <- hard_hit_pct(d_ip$ExitSpeed)
+    brl    <- barrel_pct(d_ip$ExitSpeed, d_ip$Angle)
+
+    team_avgs <- d %>%
+      group_by(Batter) %>%
+      summarise(
+        PA = n_distinct(paste(Date, Inning, PAofInning)),
+        H  = sum(PlayResult %in% c("Single","Double","Triple","HomeRun"), na.rm = TRUE),
+        BB = sum(KorBB == "Walk", na.rm = TRUE),
+        .groups = "drop"
+      ) %>%
+      summarise(total_H = sum(H), total_AB = sum(PA - BB))
+    tavg <- if (team_avgs$total_AB > 0) team_avgs$total_H / team_avgs$total_AB else NA_real_
+
+    fmt_ev  <- function(x) if (is.na(x)) "—" else paste0(round(x, 1), " mph")
+    fmt_pct <- function(x) if (is.na(x)) "—" else scales::percent(x, accuracy = 1)
+    fmt_avg <- function(x) if (is.na(x)) "—" else formatC(x, digits = 3, format = "f")
+
+    div(
+      style = "padding:12px 0 8px;",
+      layout_columns(
+        col_widths = breakpoints(sm = 6, md = 3),
+        stat_tile("AVG",       fmt_avg(tavg),  tile_class(tavg,   0.300, 0.230)),
+        stat_tile("Hard Hit%", fmt_pct(hh),    tile_class(hh,     0.40,  0.25)),
+        stat_tile("Barrel%",   fmt_pct(brl),   tile_class(brl,    0.08,  0.04)),
+        stat_tile("Avg EV",    fmt_ev(avg_ev), tile_class(avg_ev, 92,    82))
+      )
+    )
+  })
+
   # ── Player: game list and selection ───────────────────────────────────────
   player_games <- reactive({
     req(user_role() == "player")

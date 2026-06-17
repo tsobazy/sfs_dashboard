@@ -158,38 +158,56 @@ coach_layout <- function() {
         id = "main_tabs",
         tabPanel(
           "Pitching",
-          fluidRow(
-            column(6, plotlyOutput("plot_zone",    height = "380px")),
-            column(6, plotlyOutput("plot_arsenal", height = "380px"))
-          ),
-          fluidRow(
-            column(12, plotlyOutput("plot_velo_spin", height = "340px"))
-          ),
-          fluidRow(
-            column(12, DTOutput("table_pitchers"))
-          ),
-          fluidRow(
-            column(6, plotlyOutput("plot_movement", height = "380px")),
-            column(6, plotlyOutput("plot_release",  height = "380px"))
-          ),
-          fluidRow(
-            column(6, plotlyOutput("plot_outcomes",      height = "360px")),
-            column(6, plotlyOutput("plot_count_heatmap", height = "360px"))
+          uiOutput("coach_pitch_glance"),
+          tabsetPanel(
+            id = "pitch_sub_tabs",
+            tabPanel(
+              "Overview",
+              fluidRow(
+                column(6, plotlyOutput("plot_zone",    height = "380px")),
+                column(6, plotlyOutput("plot_arsenal", height = "380px"))
+              ),
+              fluidRow(column(12, DTOutput("table_pitchers")))
+            ),
+            tabPanel(
+              "Detail",
+              fluidRow(
+                column(12, plotlyOutput("plot_velo_spin", height = "340px"))
+              ),
+              fluidRow(
+                column(6, plotlyOutput("plot_movement", height = "380px")),
+                column(6, plotlyOutput("plot_release",  height = "380px"))
+              ),
+              fluidRow(
+                column(6, plotlyOutput("plot_outcomes",      height = "360px")),
+                column(6, plotlyOutput("plot_count_heatmap", height = "360px"))
+              )
+            )
           )
         ),
         tabPanel(
           "Hitting",
-          fluidRow(
-            column(6, plotlyOutput("plot_spray", height = "420px")),
-            column(6, plotlyOutput("plot_ev_la", height = "420px"))
-          ),
-          fluidRow(
-            column(12, DTOutput("table_batters"))
-          ),
-          fluidRow(
-            column(4, plotlyOutput("plot_swing_zones", height = "360px")),
-            column(4, plotlyOutput("plot_hit_types",   height = "360px")),
-            column(4, plotlyOutput("plot_pitch_vuln",  height = "360px"))
+          uiOutput("coach_hit_glance"),
+          tabsetPanel(
+            id = "hit_sub_tabs",
+            tabPanel(
+              "Overview",
+              fluidRow(
+                column(12, plotlyOutput("plot_spray", height = "420px"))
+              ),
+              fluidRow(column(12, DTOutput("table_batters")))
+            ),
+            tabPanel(
+              "Detail",
+              fluidRow(
+                column(12, plotlyOutput("plot_ev_la", height = "420px"))
+              ),
+              fluidRow(
+                column(4, plotlyOutput("plot_swing_zones", height = "360px")),
+                column(4, plotlyOutput("plot_hit_types",   height = "360px")),
+                column(4, plotlyOutput("plot_pitch_vuln",  height = "360px"))
+              )
+            )
           )
         )
       )
