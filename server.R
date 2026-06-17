@@ -42,6 +42,8 @@ tile_class <- function(val, hi_thr, lo_thr, hi_good = TRUE) {
 
 server <- function(input, output, session) {
 
+  app_data <- reactiveVal(data)
+
   # ── Auth ──────────────────────────────────────────────────────────────────
   result_auth <- secure_server(
     check_credentials = check_credentials(
@@ -94,10 +96,10 @@ server <- function(input, output, session) {
   observeEvent(user_role(), {
     req(user_role() == "coach")
     updateDateRangeInput(session, "dates",
-      start = min(data$Date, na.rm = TRUE),
-      end   = max(data$Date, na.rm = TRUE)
+      start = min(app_data()$Date, na.rm = TRUE),
+      end   = max(app_data()$Date, na.rm = TRUE)
     )
-    pt <- sort(unique(data$TaggedPitchType[data$TaggedPitchType != "Undefined"]))
+    pt <- sort(unique(app_data()$TaggedPitchType[app_data()$TaggedPitchType != "Undefined"]))
     updatePickerInput(session, "pitch_types", choices = pt, selected = pt)
   }, once = TRUE)
 
@@ -105,9 +107,9 @@ server <- function(input, output, session) {
   observeEvent(input$view_mode, {
     req(user_role() == "coach")
     players <- if (input$view_mode == "Pitching") {
-      sort(unique(data$Pitcher))
+      sort(unique(app_data()$Pitcher))
     } else {
-      sort(unique(data$Batter))
+      sort(unique(app_data()$Batter))
     }
     updatePickerInput(session, "player",
       choices  = c("All Players", players),
@@ -120,7 +122,7 @@ server <- function(input, output, session) {
     req(user_role() == "coach")
     req(input$dates, input$pitch_types, input$count, input$innings)
 
-    d <- data %>%
+    d <- app_data() %>%
       filter(
         Date >= input$dates[1],
         Date <= input$dates[2],
@@ -153,7 +155,7 @@ server <- function(input, output, session) {
     ptype <- user_player_type()
     name  <- user_player_name()
     col   <- if (ptype == "pitcher") "Pitcher" else "Batter"
-    data %>%
+    app_data() %>%
       filter(.data[[col]] == name, TaggedPitchType != "Undefined")
   })
 
