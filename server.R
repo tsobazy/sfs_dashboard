@@ -184,7 +184,8 @@ server <- function(input, output, session) {
         showlegend  = FALSE,
         paper_bgcolor = "white", plot_bgcolor = "white",
         font = list(color = "#0a1628")
-      )
+      ) %>%
+      plotly_white()
   })
 
   # ── Chart 3: Velocity & Spin by Pitch Type ────────────────────────────────
@@ -198,8 +199,6 @@ server <- function(input, output, session) {
         .groups  = "drop"
       ) %>%
       arrange(avg_spd)
-
-    cols <- PITCH_COLORS[d$TaggedPitchType]
 
     p_spd <- ggplot(d, aes(
         x = avg_spd, y = reorder(TaggedPitchType, avg_spd),
@@ -261,7 +260,7 @@ server <- function(input, output, session) {
     dt <- datatable(d,
       options = list(
         pageLength = 10,
-        order      = list(list(4, "desc"))
+        order      = list(list(3, "desc"))
       ),
       rownames = FALSE
     ) %>%
