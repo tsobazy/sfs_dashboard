@@ -421,4 +421,140 @@ server <- function(input, output, session) {
     plotly_white(ggplotly(p, tooltip = c("label", "x", "y")))
   })
 
+  # ── Chart 9: Spray Chart ──────────────────────────────────────────────────
+  output$plot_spray <- renderPlotly({
+    req(nrow(fdata()) > 0)
+    d <- fdata() %>%
+      filter(
+        !is.na(Direction), !is.na(Distance),
+        PlayResult %in% c("Single","Double","Triple","HomeRun","Out")
+      ) %>%
+      mutate(
+        spray_x =  Distance * sin(Direction * pi / 180),
+        spray_y =  Distance * cos(Direction * pi / 180)
+      )
+    req(nrow(d) > 0)
+
+    hit_colors <- c(
+      Single = "#2DC653", Double = "#F5C518",
+      Triple = "#FF8C00", HomeRun = "#E63946", Out = "#AAAAAA"
+    )
+
+    foul_line_len <- 330
+    cf_depth      <- 400
+
+    p <- ggplot(d, aes(
+        x = spray_x, y = spray_y, color = PlayResult,
+        text = paste0(Batter, "<br>", PlayResult, "<br>",
+                      round(Distance, 0), " ft @ ", round(Direction, 0), "°")
+      )) +
+      # Field outline
+      annotate("segment", x = 0, xend = -foul_line_len * sin(45 * pi/180),
+               y = 0, yend = foul_line_len * cos(45 * pi/180),
+               color = "gray70", linewidth = 0.5) +
+      annotate("segment", x = 0, xend =  foul_line_len * sin(45 * pi/180),
+               y = 0, yend = foul_line_len * cos(45 * pi/180),
+               color = "gray70", linewidth = 0.5) +
+      annotate("path",
+        x = cf_depth * sin(seq(-45, 45, length.out = 100) * pi/180),
+        y = cf_depth * cos(seq(-45, 45, length.out = 100) * pi/180),
+        color = "gray70", linewidth = 0.5
+      ) +
+      geom_point(alpha = 0.75, size = 2.5) +
+      scale_color_manual(values = hit_colors) +
+      coord_fixed(xlim = c(-350, 350), ylim = c(0, 430)) +
+      labs(
+        title = "Where the Ball Was Hit",
+        x = NULL, y = NULL, color = NULL
+      ) +
+      theme_seagulls() +
+      theme(axis.text = element_blank(), panel.grid = element_blank())
+    plotly_white(ggplotly(p, tooltip = "text"))
+  })
+
+  # ── Chart 10: Exit Velocity vs Launch Angle ────────────────────────────────
+  output$plot_ev_la <- renderPlotly({
+    req(nrow(fdata()) > 0)
+    d <- fdata() %>%
+      filter(PitchCall == "InPlay", !is.na(ExitSpeed), !is.na(Angle))
+    req(nrow(d) > 0)
+
+    result_colors <- c(
+      Single = "#2DC653", Double = "#F5C518", Triple = "#FF8C00",
+      HomeRun = "#E63946", Out = "#AAAAAA", Error = "#9B2226",
+      Undefined = "#CCCCCC"
+    )
+
+    p <- ggplot(d, aes(
+        x = Angle, y = ExitSpeed, color = PlayResult,
+        text = paste0(Batter, "<br>", PlayResult,
+                      "<br>EV: ", round(ExitSpeed, 1), " mph",
+                      "<br>LA: ", round(Angle, 1), "°")
+      )) +
+      annotate("rect",
+        xmin = 10, xmax = 30, ymin = 95, ymax = Inf,
+        fill = "#2DC653", alpha = 0.08
+      ) +
+      annotate("text", x = 20, y = 117, label = "Barrel Zone",
+               color = "#2DC653", size = 3.5, fontface = "bold") +
+      geom_point(alpha = 0.7, size = 2) +
+      scale_color_manual(values = result_colors) +
+      labs(
+        title = "Exit Velocity & Launch Angle",
+        x = "Launch Angle (°)", y = "Exit Velocity (mph)", color = NULL
+      ) +
+      theme_seagulls()
+    plotly_white(ggplotly(p, tooltip = "text"))
+  })
+
+  # ── Chart 11: Batter Leaderboard ──────────────────────────────────────────
+  output$table_batters <- renderDT({
+    req(nrow(fdata()) > 0)
+    d <- fdata() %>%
+      group_by(Batter) %>%
+      summarise(
+        PA     = n_distinct(paste(Date, Inning, PAofInning)),
+        H      = sum(PlayResult %in% c("Single","Double","Triple","HomeRun"), na.rm=TRUE),
+        BB     = sum(KorBB == "Walk",      na.rm = TRUE),
+        K      = sum(KorBB == "Strikeout", na.rm = TRUE),
+        Single = sum(PlayResult == "Single",   na.rm = TRUE),
+        Double = sum(PlayResult == "Double",   na.rm = TRUE),
+        Triple = sum(PlayResult == "Triple",   na.rm = TRUE),
+        HR     = sum(PlayResult == "HomeRun",  na.rm = TRUE),
+        avg_ev = mean(ExitSpeed[PitchCall == "InPlay"], na.rm = TRUE),
+        hh_pct = hard_hit_pct(ExitSpeed[PitchCall == "InPlay"]),
+        brl_pct = barrel_pct(
+          ExitSpeed[PitchCall == "InPlay"],
+          Angle[PitchCall == "InPlay"]
+        ),
+        .groups = "drop"
+      ) %>%
+      mutate(
+        AB  = PA - BB,
+        TB  = Single + 2*Double + 3*Triple + 4*HR,
+        AVG = if_else(AB > 0, H / AB, NA_real_),
+        OBP = if_else(PA > 0, (H + BB) / PA, NA_real_),
+        SLG = if_else(AB > 0, TB / AB, NA_real_),
+        `K%`  = K  / PA,
+        `BB%` = BB / PA
+      ) %>%
+      left_join(roster_positions[, c("player_name","position")],
+                by = c("Batter" = "player_name")) %>%
+      select(Batter, Position = position, PA, AVG, OBP, SLG,
+             `K%`, `BB%`, `Avg EV` = avg_ev,
+             `Hard Hit%` = hh_pct, `Barrel%` = brl_pct)
+
+    datatable(d,
+      options  = list(pageLength = 10, order = list(list(4, "desc"))),
+      rownames = FALSE
+    ) %>%
+      formatRound(c("AVG","OBP","SLG"), digits = 3) %>%
+      formatPercentage(c("K%","BB%","Hard Hit%","Barrel%"), digits = 1) %>%
+      formatRound("Avg EV", digits = 1) %>%
+      formatStyle("Avg EV",
+        background = styleInterval(c(82, 92),
+          c("#fde8e8", "white", "#e0f5f2"))
+      )
+  })
+
 }
