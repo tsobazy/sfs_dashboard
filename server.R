@@ -8,6 +8,28 @@ library(scales)
 
 source("roster.R")
 
+# Stat tile helper for player scorecard
+stat_tile <- function(label, value_str, css_class = "tile-neutral") {
+  div(
+    class = "value-tile",
+    div(class = "tile-label", label),
+    div(class = paste("tile-value", css_class), value_str)
+  )
+}
+
+tile_class <- function(val, hi_thr, lo_thr, hi_good = TRUE) {
+  if (is.na(val)) return("tile-neutral")
+  if (hi_good) {
+    if (val >= hi_thr) "tile-teal"
+    else if (val <= lo_thr) "tile-amber"
+    else "tile-neutral"
+  } else {
+    if (val <= hi_thr) "tile-teal"
+    else if (val >= lo_thr) "tile-amber"
+    else "tile-neutral"
+  }
+}
+
 server <- function(input, output, session) {
 
   # ── Auth ──────────────────────────────────────────────────────────────────
@@ -791,6 +813,119 @@ server <- function(input, output, session) {
         )
       }
     )
+  })
+
+  # ── Player: pitcher section ───────────────────────────────────────────────
+  output$player_pitcher_section <- renderUI({
+    d <- player_fdata()
+
+    spct  <- strike_pct(d$PitchCall)
+    wpct  <- whiff_pct(d$PitchCall)
+    cswp  <- csw_pct(d$PitchCall)
+    chsp  <- chase_pct(d$PlateLocSide, d$PlateLocHeight, d$PitchCall)
+
+    fmt <- function(x) if (is.na(x)) "—" else scales::percent(x, accuracy = 1)
+
+    tagList(
+      tags$h6("Pitching", style = "color:#0a1628; font-weight:600; margin:12px 0 8px;"),
+      # Scorecard tiles
+      layout_columns(
+        col_widths = breakpoints(sm = 6, md = 3),
+        stat_tile("Strike%", fmt(spct), tile_class(spct, 0.65, 0.54)),
+        stat_tile("Whiff%",  fmt(wpct), tile_class(wpct, 0.30, 0.19)),
+        stat_tile("CSW%",    fmt(cswp), tile_class(cswp, 0.28, 0.20)),
+        stat_tile("Chase%",  fmt(chsp), tile_class(chsp, 0.30, 0.00))
+      ),
+      # Charts
+      layout_columns(
+        col_widths = breakpoints(sm = 12, md = 6),
+        plotlyOutput("player_zone",     height = "340px"),
+        plotlyOutput("player_arsenal",  height = "340px"),
+        plotlyOutput("player_release",  height = "340px"),
+        plotlyOutput("player_outcomes", height = "340px")
+      )
+    )
+  })
+
+  output$player_zone <- renderPlotly({
+    d <- player_fdata()
+    req(nrow(d) > 0)
+    p <- ggplot(d, aes(
+        x = PlateLocSide, y = PlateLocHeight, color = TaggedPitchType,
+        text = paste0(TaggedPitchType, "<br>", round(RelSpeed,1), " mph<br>", PitchCall)
+      )) +
+      geom_point(alpha = 0.6, size = 2.5) +
+      annotate("rect", xmin=SZ_LEFT, xmax=SZ_RIGHT, ymin=SZ_BOT, ymax=SZ_TOP,
+               fill=NA, color="black", linewidth=0.8) +
+      scale_color_manual(values = PITCH_COLORS, drop = FALSE) +
+      scale_x_continuous(limits = c(-2.5, 2.5)) +
+      scale_y_continuous(limits = c(0, 5)) +
+      labs(title="Pitch Location", x="Horizontal (ft)", y="Height (ft)", color=NULL) +
+      theme_seagulls() + coord_fixed()
+    plotly_white(ggplotly(p, tooltip = "text"))
+  })
+
+  output$player_arsenal <- renderPlotly({
+    d <- player_fdata()
+    req(nrow(d) > 0)
+    ds <- d %>%
+      group_by(TaggedPitchType) %>%
+      summarise(n=n(), avg_spd=round(mean(RelSpeed,na.rm=TRUE),1),
+                avg_spin=round(mean(SpinRate,na.rm=TRUE),0), .groups="drop") %>%
+      mutate(pct = n / sum(n))
+    plot_ly(ds,
+      labels=~TaggedPitchType, values=~n, type="pie", hole=0.5,
+      marker=list(colors=unname(PITCH_COLORS[ds$TaggedPitchType])),
+      text=~paste0(TaggedPitchType,"<br>",scales::percent(pct,1),"<br>",avg_spd," mph"),
+      hoverinfo="text", textinfo="label+percent"
+    ) %>% layout(title=list(text="Pitch Mix"), showlegend=FALSE,
+                  paper_bgcolor="white", plot_bgcolor="white",
+                  font=list(color="#0a1628"))
+  })
+
+  output$player_release <- renderPlotly({
+    d <- player_fdata()
+    req(nrow(d) > 0)
+    p <- ggplot(d, aes(x=RelSide, y=RelHeight, color=TaggedPitchType)) +
+      geom_point(alpha=0.5, size=1.5) +
+      stat_ellipse(aes(group=TaggedPitchType), linewidth=0.8) +
+      scale_color_manual(values=PITCH_COLORS) +
+      labs(title="Release Point",
+           subtitle="Tighter clusters = more consistent",
+           x="Horizontal (ft)", y="Height (ft)", color=NULL) +
+      theme_seagulls()
+    plotly_white(ggplotly(p, tooltip=c("x","y","colour")))
+  })
+
+  output$player_outcomes <- renderPlotly({
+    d <- player_fdata()
+    req(nrow(d) > 0)
+    outcome_bucket <- function(call) {
+      case_when(
+        call %in% c("BallCalled","BallinDirt","HitByPitch") ~ "Ball",
+        call == "StrikeCalled"  ~ "Called Strike",
+        call %in% c("FoulBallNotFieldable","FoulBallFieldable") ~ "Foul",
+        call == "StrikeSwinging" ~ "Whiff",
+        call == "InPlay"         ~ "In Play",
+        TRUE                     ~ "Other"
+      )
+    }
+    outcome_colors <- c(Ball="#ADB5BD",`Called Strike`="#457B9D",
+                         Foul="#E9C46A",Whiff="#E63946",`In Play`="#2DC653")
+    ds <- d %>%
+      mutate(Outcome=outcome_bucket(PitchCall), csw=csw_pct(PitchCall)) %>%
+      count(TaggedPitchType, Outcome) %>%
+      group_by(TaggedPitchType) %>%
+      mutate(prop=n/sum(n)) %>% ungroup()
+    p <- ggplot(ds, aes(x=TaggedPitchType, y=prop, fill=Outcome,
+        text=paste0(Outcome,": ",scales::percent(prop,1)))) +
+      geom_col(position="fill") +
+      scale_fill_manual(values=outcome_colors) +
+      scale_y_continuous(labels=scales::percent_format()) +
+      coord_flip() +
+      labs(title="Pitch Outcomes", x=NULL, y=NULL, fill=NULL) +
+      theme_seagulls()
+    plotly_white(ggplotly(p, tooltip="text"))
   })
 
 }
