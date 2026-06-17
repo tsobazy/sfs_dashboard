@@ -890,16 +890,46 @@ server <- function(input, output, session) {
     d <- player_fdata()
     if (nrow(d) == 0) return(div("No data for this game.", style = "color:#888; margin:16px 0;"))
 
-    spct  <- strike_pct(d$PitchCall)
-    wpct  <- whiff_pct(d$PitchCall)
-    cswp  <- csw_pct(d$PitchCall)
-    chsp  <- chase_pct(d$PlateLocSide, d$PlateLocHeight, d$PitchCall)
+    spct <- strike_pct(d$PitchCall)
+    wpct <- whiff_pct(d$PitchCall)
+    cswp <- csw_pct(d$PitchCall)
+    chsp <- chase_pct(d$PlateLocSide, d$PlateLocHeight, d$PitchCall)
 
     fmt <- function(x) if (is.na(x)) "—" else scales::percent(x, accuracy = 1)
 
+    # Takeaway sentence
+    hi_thr <- c("Strike%" = 0.65, "Whiff%" = 0.30, "CSW%" = 0.28)
+    lo_thr <- c("Strike%" = 0.54, "Whiff%" = 0.19, "CSW%" = 0.20)
+    vals   <- c("Strike%" = spct,  "Whiff%" = wpct,  "CSW%" = cswp)
+    good_m <- names(vals)[!is.na(vals) & vals >= hi_thr]
+    weak_m <- names(vals)[!is.na(vals) & vals <= lo_thr]
+
+    first_clause <- if (length(good_m) > 0) {
+      paste0("Your ", good_m[1], " was strong at ", fmt(vals[good_m[1]]))
+    } else if (length(weak_m) > 0) {
+      paste0("Your ", weak_m[1], " is an area to develop (", fmt(vals[weak_m[1]]), ")")
+    } else {
+      paste0("Strike% ", fmt(spct))
+    }
+
+    best_wp <- d %>%
+      group_by(TaggedPitchType) %>%
+      summarise(wp = whiff_pct(PitchCall), n = n(), .groups = "drop") %>%
+      filter(n >= 5) %>%
+      slice_max(wp, n = 1, with_ties = FALSE)
+
+    second_clause <- if (nrow(best_wp) > 0 && !is.na(best_wp$wp))
+      paste0(" — your ", best_wp$TaggedPitchType,
+             " generated the most whiffs (", fmt(best_wp$wp), ").")
+    else "."
+
     tagList(
       tags$h6("Pitching", style = "color:#0a1628; font-weight:600; margin:12px 0 8px;"),
-      # Scorecard tiles
+      div(
+        style = "background:#f0fafb; border-left:3px solid #2A9D8F; padding:10px 14px;
+                 border-radius:4px; margin-bottom:12px; font-size:13px; color:#0a1628;",
+        paste0(first_clause, second_clause)
+      ),
       layout_columns(
         col_widths = breakpoints(sm = 6, md = 3),
         stat_tile("Strike%", fmt(spct), tile_class(spct, 0.65, 0.54)),
@@ -907,7 +937,6 @@ server <- function(input, output, session) {
         stat_tile("CSW%",    fmt(cswp), tile_class(cswp, 0.28, 0.20)),
         stat_tile("Chase%",  fmt(chsp), tile_class(chsp, 0.30, 0.00))
       ),
-      # Charts
       layout_columns(
         col_widths = breakpoints(sm = 12, md = 6),
         plotlyOutput("player_zone",     height = "340px"),
@@ -1005,36 +1034,53 @@ server <- function(input, output, session) {
     d <- player_fdata()
     if (nrow(d) == 0) return(div("No data for this game.", style = "color:#888; margin:16px 0;"))
 
-    d_ip <- d %>% filter(PitchCall == "InPlay", !is.na(ExitSpeed))
+    d_ip   <- d %>% filter(PitchCall == "InPlay", !is.na(ExitSpeed))
     avg_ev <- mean(d_ip$ExitSpeed, na.rm = TRUE)
     hh     <- hard_hit_pct(d_ip$ExitSpeed)
 
-    # Zone swing%
-    d_zone <- d %>% filter(!is.na(PlateLocSide), !is.na(PlateLocHeight))
-    in_zone <- d_zone$PlateLocSide >= SZ_LEFT & d_zone$PlateLocSide <= SZ_RIGHT &
+    d_zone  <- d %>% filter(!is.na(PlateLocSide), !is.na(PlateLocHeight))
+    in_zone <- d_zone$PlateLocSide  >= SZ_LEFT & d_zone$PlateLocSide  <= SZ_RIGHT &
                d_zone$PlateLocHeight >= SZ_BOT  & d_zone$PlateLocHeight <= SZ_TOP
-    swings <- d_zone$PitchCall %in% c("StrikeSwinging","FoulBallNotFieldable",
-                                       "FoulBallFieldable","InPlay")
+    swings  <- d_zone$PitchCall %in% c("StrikeSwinging","FoulBallNotFieldable",
+                                        "FoulBallFieldable","InPlay")
     swing_zone <- if (sum(in_zone) > 0) sum(in_zone & swings) / sum(in_zone) else NA_real_
-
-    ooz <- !in_zone
-    chase <- if (sum(ooz) > 0) sum(ooz & swings) / sum(ooz) else NA_real_
+    ooz        <- !in_zone
+    chase      <- if (sum(ooz) > 0) sum(ooz & swings) / sum(ooz) else NA_real_
 
     fmt_ev  <- function(x) if (is.na(x)) "—" else paste0(round(x, 1), " mph")
     fmt_pct <- function(x) if (is.na(x)) "—" else scales::percent(x, accuracy = 1)
 
+    # Takeaway sentence
+    first_clause <- if (!is.na(hh) && hh >= 0.40) {
+      paste0("You were hitting the ball hard — ", fmt_pct(hh), " hard contact rate")
+    } else if (!is.na(avg_ev) && avg_ev >= 92) {
+      paste0("Strong exit velocity at ", fmt_ev(avg_ev))
+    } else if (!is.na(hh)) {
+      paste0("Hard Hit% was ", fmt_pct(hh), " this game")
+    } else {
+      "Limited ball-in-play data for this game"
+    }
+
+    second_clause <- if (!is.na(chase)) {
+      if (chase <= 0.25)
+        paste0(" — good pitch recognition (", fmt_pct(chase), " chase rate).")
+      else
+        paste0(" — pitches outside the zone drew ", fmt_pct(chase), " of your swings.")
+    } else "."
+
     tagList(
       tags$h6("Hitting", style = "color:#0a1628; font-weight:600; margin:12px 0 8px;"),
+      div(
+        style = "background:#f0fafb; border-left:3px solid #2A9D8F; padding:10px 14px;
+                 border-radius:4px; margin-bottom:12px; font-size:13px; color:#0a1628;",
+        paste0(first_clause, second_clause)
+      ),
       layout_columns(
         col_widths = breakpoints(sm = 6, md = 3),
-        stat_tile("Avg Exit Velo", fmt_ev(avg_ev),
-                  tile_class(avg_ev, 92, 82)),
-        stat_tile("Hard Hit%", fmt_pct(hh),
-                  tile_class(hh, 0.40, 0.25)),
-        stat_tile("Zone Swing%", fmt_pct(swing_zone),
-                  tile_class(swing_zone, 0.70, 0.00)),
-        stat_tile("Chase%", fmt_pct(chase),
-                  tile_class(chase, 0.25, 0.35, hi_good = FALSE))
+        stat_tile("Avg Exit Velo", fmt_ev(avg_ev),     tile_class(avg_ev,     92,   82)),
+        stat_tile("Hard Hit%",     fmt_pct(hh),         tile_class(hh,         0.40, 0.25)),
+        stat_tile("Zone Swing%",   fmt_pct(swing_zone), tile_class(swing_zone, 0.70, 0.00)),
+        stat_tile("Chase%",        fmt_pct(chase),      tile_class(chase, 0.25, 0.35, hi_good = FALSE))
       ),
       layout_columns(
         col_widths = breakpoints(sm = 12, md = 4),
