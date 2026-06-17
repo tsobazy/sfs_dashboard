@@ -557,4 +557,147 @@ server <- function(input, output, session) {
       )
   })
 
+  # ── Chart 12: Swing Decision Heatmap ──────────────────────────────────────
+  output$plot_swing_zones <- renderPlotly({
+    req(nrow(fdata()) > 0)
+
+    zone_w <- (SZ_RIGHT - SZ_LEFT) / 3
+    zone_h <- (SZ_TOP   - SZ_BOT)  / 3
+
+    d <- fdata() %>%
+      filter(!is.na(PlateLocSide), !is.na(PlateLocHeight)) %>%
+      mutate(
+        zone_col = cut(PlateLocSide,
+          breaks = c(-Inf, SZ_LEFT + zone_w, SZ_LEFT + 2*zone_w, Inf),
+          labels = c("Left","Middle","Right")
+        ),
+        zone_row = cut(PlateLocHeight,
+          breaks = c(-Inf, SZ_BOT + zone_h, SZ_BOT + 2*zone_h, Inf),
+          labels = c("Low","Mid","High")
+        ),
+        swing = PitchCall %in% c("StrikeSwinging","FoulBallNotFieldable",
+                                  "FoulBallFieldable","InPlay")
+      ) %>%
+      filter(!is.na(zone_col), !is.na(zone_row)) %>%
+      group_by(zone_col, zone_row) %>%
+      summarise(
+        swing_pct = mean(swing), n = n(), .groups = "drop"
+      )
+
+    p <- ggplot(d, aes(
+        x = zone_col, y = zone_row, fill = swing_pct,
+        label = scales::percent(swing_pct, accuracy = 1)
+      )) +
+      geom_tile(color = "white", linewidth = 0.8) +
+      geom_text(size = 5, fontface = "bold") +
+      scale_fill_gradient2(
+        low = "#457B9D", mid = "white", high = "#E63946",
+        midpoint = 0.5, labels = scales::percent_format(), name = "Swing%"
+      ) +
+      scale_x_discrete(limits = c("Left","Middle","Right")) +
+      scale_y_discrete(limits = c("Low","Mid","High")) +
+      labs(
+        title    = "Swing Rates by Zone",
+        subtitle = "Do hitters swing at the right pitches?",
+        x = NULL, y = NULL
+      ) +
+      theme_seagulls() + theme(panel.grid = element_blank())
+    plotly_white(ggplotly(p, tooltip = c("x","y","label")))
+  })
+
+  # ── Chart 13: Hit Type Distribution ───────────────────────────────────────
+  output$plot_hit_types <- renderPlotly({
+    req(nrow(fdata()) > 0)
+    d <- fdata() %>% filter(TaggedHitType %in% BIP_TYPES)
+    req(nrow(d) > 0)
+
+    bip_colors <- c(
+      GroundBall = "#8B4513", FlyBall  = "#457B9D",
+      LineDrive  = "#2DC653", Popup    = "#AAAAAA"
+    )
+
+    p <- ggplot(d, aes(x = Batter, fill = TaggedHitType)) +
+      geom_bar(position = "fill") +
+      scale_fill_manual(values = bip_colors) +
+      scale_y_continuous(labels = scales::percent_format()) +
+      coord_flip() +
+      labs(
+        title = "Batted Ball Type by Hitter",
+        x = NULL, y = "Proportion", fill = NULL
+      ) +
+      theme_seagulls()
+    plotly_white(ggplotly(p, tooltip = c("x","fill","count")))
+  })
+
+  # ── Chart 14: Pitch Vulnerability Heatmap ─────────────────────────────────
+  output$plot_pitch_vuln <- renderPlotly({
+    req(nrow(fdata()) > 0)
+    d <- fdata() %>%
+      group_by(Batter, TaggedPitchType) %>%
+      summarise(
+        wp = whiff_pct(PitchCall),
+        n  = n(),
+        .groups = "drop"
+      ) %>%
+      mutate(wp = if_else(n < 5, NA_real_, wp))
+
+    p <- ggplot(d, aes(
+        x = TaggedPitchType, y = Batter, fill = wp,
+        label = if_else(is.na(wp), "—", scales::percent(wp, accuracy = 1))
+      )) +
+      geom_tile(color = "white", linewidth = 0.4) +
+      geom_text(size = 3) +
+      scale_fill_gradient2(
+        low = "#2DC653", mid = "white", high = "#E63946",
+        midpoint = 0.25, na.value = "#f0f0f0",
+        labels = scales::percent_format(), name = "Whiff%"
+      ) +
+      labs(
+        title = "Batter Whiff Rate vs. Each Pitch Type",
+        x = NULL, y = NULL
+      ) +
+      theme_seagulls() +
+      theme(axis.text.x = element_text(angle = 30, hjust = 1),
+            panel.grid  = element_blank())
+    plotly_white(ggplotly(p, tooltip = c("x","y","label")))
+  })
+
+  # ── Insight Box ───────────────────────────────────────────────────────────
+  output$insights <- renderUI({
+    req(nrow(fdata()) > 0)
+    d <- fdata()
+
+    spct   <- strike_pct(d$PitchCall)
+    wpct   <- whiff_pct(d$PitchCall)
+    cswpct <- csw_pct(d$PitchCall)
+    cpct   <- chase_pct(d$PlateLocSide, d$PlateLocHeight, d$PitchCall)
+
+    best_whiff <- d %>%
+      group_by(TaggedPitchType) %>%
+      summarise(wp = whiff_pct(PitchCall), n = n(), .groups = "drop") %>%
+      filter(n >= 10) %>%
+      slice_max(wp, n = 1, with_ties = FALSE)
+
+    fmt <- function(x) if (is.na(x)) "—" else scales::percent(x, accuracy = 1)
+
+    tagList(
+      tags$div(
+        style = "background:#f8f9fa; border-radius:8px; padding:12px;
+                 border:1px solid #e0e0e0; font-size:13px;",
+        tags$strong("Key Metrics", style = "display:block; margin-bottom:8px;
+                     font-size:14px; color:#0a1628;"),
+        tags$div(paste0("Strike%: ",  fmt(spct))),
+        tags$div(paste0("Whiff%: ",   fmt(wpct))),
+        tags$div(paste0("CSW%: ",     fmt(cswpct))),
+        tags$div(paste0("Chase%: ",   fmt(cpct))),
+        if (nrow(best_whiff) > 0)
+          tags$div(
+            style = "margin-top:8px; padding-top:8px; border-top:1px solid #ddd;",
+            tags$strong("Best Whiff Pitch: "),
+            paste0(best_whiff$TaggedPitchType, " (", fmt(best_whiff$wp), ")")
+          )
+      )
+    )
+  })
+
 }
