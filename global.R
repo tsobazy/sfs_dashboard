@@ -166,7 +166,7 @@ source("sync_drive.R")
 coach_sidebar <- function() {
   pt <- sort(unique(data$TaggedPitchType[data$TaggedPitchType != "Undefined"]))
   div(
-    style = "width:280px; min-width:280px; padding:0; background:#015294;
+    style = "width:280px; min-width:280px; padding:0; background:#1E2A3A;
              height:100vh; overflow-y:auto; display:flex; flex-direction:column;",
 
     # Navy header — logo + identity
@@ -230,7 +230,7 @@ coach_sidebar <- function() {
 
 coach_layout <- function() {
   div(
-    style = "display:flex; height:100vh;",
+    style = "display:flex; height:100vh; margin:0; padding:0;",
     coach_sidebar(),
     div(
       style = "flex:1; overflow-y:auto; padding:20px;",
@@ -238,7 +238,6 @@ coach_layout <- function() {
         id = "main_tabs",
         tabPanel(
           "Pitching",
-          uiOutput("coach_pitch_glance"),
           tabsetPanel(
             id = "pitch_sub_tabs",
             tabPanel(
@@ -269,15 +268,15 @@ coach_layout <- function() {
         ),
         tabPanel(
           "Hitting",
-          uiOutput("coach_hit_glance"),
           tabsetPanel(
             id = "hit_sub_tabs",
             tabPanel(
               "Overview",
+              uiOutput("coach_hit_glance"),
               fluidRow(
-                column(12, plotlyOutput("plot_spray", height = "420px"))
-              ),
-              fluidRow(column(12, DTOutput("table_batters")))
+                column(7, plotlyOutput("plot_spray",   height = "440px")),
+                column(5, DTOutput("table_batters"))
+              )
             ),
             tabPanel(
               "Detail",
