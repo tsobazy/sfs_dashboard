@@ -145,7 +145,14 @@ coach_sidebar <- function() {
     sliderInput("innings", "Innings", min = 1, max = 9,
                 value = c(1, 9), step = 1),
     hr(),
-    uiOutput("insights")
+    uiOutput("insights"),
+    hr(),
+    div(
+      style = "margin-top:4px;",
+      actionButton("sync_data", "⟳ Sync Data from Drive",
+                   class = "btn-sm btn-outline-primary w-100"),
+      uiOutput("sync_status")
+    )
   )
 }
 

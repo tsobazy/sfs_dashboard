@@ -806,6 +806,77 @@ server <- function(input, output, session) {
     )
   })
 
+  # ── Sync status display ────────────────────────────────────────────────────
+  output$sync_status <- renderUI({ NULL })
+
+  # ── Google Drive sync handler ──────────────────────────────────────────────
+  observeEvent(input$sync_data, {
+    req(user_role() == "coach")
+
+    folder_id <- Sys.getenv("SEAGULLS_DRIVE_FOLDER_ID")
+    if (nchar(folder_id) == 0) {
+      output$sync_status <- renderUI({
+        tags$small(
+          "Set SEAGULLS_DRIVE_FOLDER_ID in .Renviron and restart the app.",
+          style = "color:#F4A261; font-size:11px; display:block; margin-top:4px;"
+        )
+      })
+      return()
+    }
+
+    output$sync_status <- renderUI({
+      tags$small("Syncing…",
+                 style = "color:#555; font-size:11px; display:block; margin-top:4px;")
+    })
+
+    tryCatch({
+      n_new  <- sync_from_drive(folder_id)
+      n_rows <- build_combined_csv()
+
+      new_data <- readr::read_csv("all_fall_25.csv", show_col_types = FALSE)
+      new_data$TaggedPitchType <- dplyr::if_else(
+        new_data$TaggedPitchType %in% c("Other", NA_character_),
+        "Undefined", new_data$TaggedPitchType
+      )
+      new_data$Count <- paste0(new_data$Balls, "-", new_data$Strikes)
+      app_data(new_data)
+
+      updateDateRangeInput(session, "dates",
+        start = min(new_data$Date, na.rm = TRUE),
+        end   = max(new_data$Date, na.rm = TRUE)
+      )
+      pt <- sort(unique(new_data$TaggedPitchType[new_data$TaggedPitchType != "Undefined"]))
+      updatePickerInput(session, "pitch_types", choices = pt, selected = pt)
+      if (input$view_mode == "Pitching") {
+        updatePickerInput(session, "player",
+          choices  = c("All Players", sort(unique(new_data$Pitcher))),
+          selected = "All Players"
+        )
+      } else {
+        updatePickerInput(session, "player",
+          choices  = c("All Players", sort(unique(new_data$Batter))),
+          selected = "All Players"
+        )
+      }
+
+      output$sync_status <- renderUI({
+        tags$small(
+          paste0("✓ ", n_new, " new file(s) — ",
+                 format(n_rows, big.mark = ","), " pitches loaded"),
+          style = "color:#2A9D8F; font-size:11px; display:block; margin-top:4px;"
+        )
+      })
+    }, error = function(e) {
+      output$sync_status <- renderUI({
+        tags$small(
+          paste0("Error: ", conditionMessage(e)),
+          style = "color:#E63946; font-size:11px; display:block; margin-top:4px;
+                  word-break:break-word;"
+        )
+      })
+    })
+  })
+
   # ── Player: game list and selection ───────────────────────────────────────
   player_games <- reactive({
     req(user_role() == "player")
