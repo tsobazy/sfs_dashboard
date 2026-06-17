@@ -976,13 +976,17 @@ server <- function(input, output, session) {
       layout_columns(
         col_widths = breakpoints(sm = 6, md = 3),
         stat_tile("Strike%", fmt(spct), tile_class(spct, 0.65, 0.54),
-                  trend = mk_trend(spct, spct_base)),
+                  trend        = mk_trend(spct, spct_base),
+                  tooltip_text = "Percent of your pitches that were strikes, swung at, or put in play."),
         stat_tile("Whiff%",  fmt(wpct), tile_class(wpct, 0.30, 0.19),
-                  trend = mk_trend(wpct, wpct_base)),
+                  trend        = mk_trend(wpct, wpct_base),
+                  tooltip_text = "Share of swings where the hitter completely missed — higher is better for pitchers."),
         stat_tile("CSW%",    fmt(cswp), tile_class(cswp, 0.28, 0.20),
-                  trend = mk_trend(cswp, cswp_base)),
+                  trend        = mk_trend(cswp, cswp_base),
+                  tooltip_text = "Called Strikes + Whiffs: pitches where the catcher or swing gave you a strike with no contact."),
         stat_tile("Chase%",  fmt(chsp), tile_class(chsp, 0.30, 0.00),
-                  trend = mk_trend(chsp, chsp_base))
+                  trend        = mk_trend(chsp, chsp_base),
+                  tooltip_text = "How often hitters swung at pitches outside the strike zone — higher means better stuff.")
       ),
       layout_columns(
         col_widths = breakpoints(sm = 12, md = 6),
@@ -1169,13 +1173,17 @@ server <- function(input, output, session) {
       layout_columns(
         col_widths = breakpoints(sm = 6, md = 3),
         stat_tile("Avg Exit Velo", fmt_ev(avg_ev),     tile_class(avg_ev,     92,   82),
-                  trend = mk_trend_ev(avg_ev, avg_ev_base)),
+                  trend        = mk_trend_ev(avg_ev, avg_ev_base),
+                  tooltip_text = "How hard you hit the ball on average — 95+ mph is considered hard contact."),
         stat_tile("Hard Hit%",     fmt_pct(hh),         tile_class(hh,         0.40, 0.25),
-                  trend = mk_trend(hh, hh_base)),
+                  trend        = mk_trend(hh, hh_base),
+                  tooltip_text = "Share of your batted balls hit at 95 mph or harder."),
         stat_tile("Zone Swing%",   fmt_pct(swing_zone), tile_class(swing_zone, 0.70, 0.00),
-                  trend = mk_trend(swing_zone, swing_zone_base)),
+                  trend        = mk_trend(swing_zone, swing_zone_base),
+                  tooltip_text = "How often you swung at pitches inside the strike zone — attacking hittable pitches."),
         stat_tile("Chase%",        fmt_pct(chase),      tile_class(chase, 0.25, 0.35, hi_good = FALSE),
-                  trend = mk_trend(chase, chase_base))
+                  trend        = mk_trend(chase, chase_base),
+                  tooltip_text = "How often you swung at pitches outside the strike zone — lower means better pitch recognition.")
       ),
       layout_columns(
         col_widths = breakpoints(sm = 12, md = 4),
