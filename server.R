@@ -171,6 +171,10 @@ server <- function(input, output, session) {
   # ── Chart 1: Strike Zone Map ───────────────────────────────────────────────
   output$plot_zone <- renderPlotly({
     req(nrow(fdata()) > 0)
+    home_plate <- data.frame(
+      x = c(SZ_LEFT, SZ_RIGHT, SZ_RIGHT, 0, SZ_LEFT),
+      y = c(0, 0, -0.25, -0.5, -0.25)
+    )
     p <- ggplot(fdata(), aes(
         x = PlateLocSide, y = PlateLocHeight,
         color = TaggedPitchType,
@@ -179,21 +183,23 @@ server <- function(input, output, session) {
                       "<br>Speed: ", round(RelSpeed, 1), " mph",
                       "<br>Result: ", PitchCall)
       )) +
-      geom_point(alpha = 0.55, size = 2) +
+      geom_polygon(data = home_plate, aes(x = x, y = y),
+                   inherit.aes = FALSE, fill = "#e8e8e8", color = "#888888") +
       annotate("rect",
         xmin = SZ_LEFT, xmax = SZ_RIGHT,
         ymin = SZ_BOT,  ymax = SZ_TOP,
         fill = NA, color = "black", linewidth = 0.8
       ) +
+      geom_point(alpha = 0.55, size = 2) +
       scale_color_manual(values = PITCH_COLORS, drop = FALSE) +
       scale_x_continuous(limits = c(-2.5, 2.5)) +
-      scale_y_continuous(limits = c(0, 5)) +
+      scale_y_continuous(limits = c(-0.6, 5)) +
       labs(
         title    = "Pitch Location Map",
-        subtitle = "Each dot is one pitch. The black box is the strike zone.",
+        subtitle = "Catcher's-eye view — you're looking out toward the pitcher",
         color    = NULL, x = "Horizontal (ft)", y = "Height (ft)"
       ) +
-      theme_seagulls() + coord_fixed()
+      theme_seagulls()
     plotly_white(ggplotly(p, tooltip = "text"))
   })
 
@@ -268,10 +274,11 @@ server <- function(input, output, session) {
         x = avg_spd, y = reorder(TaggedPitchType, avg_spd),
         fill = TaggedPitchType
       )) +
-      geom_col() +
-      geom_text(aes(label = round(avg_spd, 1)), hjust = -0.1, size = 3) +
+      geom_col(width = 0.6) +
+      geom_text(aes(label = round(avg_spd, 1)),
+                hjust = 1.1, color = "white", fontface = "bold", size = 3.5) +
       scale_fill_manual(values = PITCH_COLORS) +
-      scale_x_continuous(expand = expansion(mult = c(0, 0.15))) +
+      scale_x_continuous(expand = expansion(mult = c(0, 0.05))) +
       labs(x = "Avg Velocity (mph)", y = NULL, title = "Avg Velocity") +
       theme_seagulls() + theme(legend.position = "none")
 
@@ -279,10 +286,11 @@ server <- function(input, output, session) {
         x = avg_spin, y = reorder(TaggedPitchType, avg_spd),
         fill = TaggedPitchType
       )) +
-      geom_col() +
-      geom_text(aes(label = round(avg_spin, 0)), hjust = -0.1, size = 3) +
+      geom_col(width = 0.6) +
+      geom_text(aes(label = round(avg_spin, 0)),
+                hjust = 1.1, color = "white", fontface = "bold", size = 3.5) +
       scale_fill_manual(values = PITCH_COLORS) +
-      scale_x_continuous(expand = expansion(mult = c(0, 0.15))) +
+      scale_x_continuous(expand = expansion(mult = c(0, 0.05))) +
       labs(x = "Avg Spin Rate (rpm)", y = NULL, title = "Avg Spin Rate") +
       theme_seagulls() + theme(legend.position = "none")
 
@@ -369,7 +377,8 @@ server <- function(input, output, session) {
       scale_color_manual(values = PITCH_COLORS) +
       scale_size_continuous(range = c(3, 10)) +
       labs(
-        title = "How Much Each Pitch Moves",
+        title    = "How Much Each Pitch Moves",
+        subtitle = "Pitcher's-eye view — like the TV camera behind the mound",
         x = "Horizontal Break (in)", y = "Induced Vert Break (in)",
         color = NULL, size = "Pitches"
       ) +
@@ -380,18 +389,24 @@ server <- function(input, output, session) {
   # ── Chart 6: Release Point Scatter ────────────────────────────────────────
   output$plot_release <- renderPlotly({
     req(nrow(fdata()) > 0)
-    p <- ggplot(fdata(), aes(
-        x = RelSide, y = RelHeight, color = TaggedPitchType
-      )) +
+    ellipse_data <- fdata() %>%
+      group_by(TaggedPitchType) %>%
+      filter(n() >= 8) %>%
+      ungroup()
+    p <- ggplot(fdata(), aes(x = RelSide, y = RelHeight, color = TaggedPitchType)) +
       geom_point(alpha = 0.5, size = 1.5) +
-      stat_ellipse(aes(group = TaggedPitchType), linewidth = 0.8) +
+      { if (nrow(ellipse_data) > 0)
+          stat_ellipse(data = ellipse_data, aes(group = TaggedPitchType),
+                       level = 0.68, linewidth = 0.8)
+      } +
       scale_color_manual(values = PITCH_COLORS) +
       labs(
         title    = "Release Point",
         subtitle = "Tighter clusters = more consistent mechanics",
         x = "Horizontal (ft)", y = "Height (ft)", color = NULL
       ) +
-      theme_seagulls()
+      theme_seagulls() +
+      theme(legend.position = if (n_distinct(fdata()$TaggedPitchType) <= 1) "none" else "right")
     plotly_white(ggplotly(p, tooltip = c("x", "y", "colour")))
   })
 
@@ -556,13 +571,16 @@ server <- function(input, output, session) {
                       "<br>LA: ", round(Angle, 1), "°")
       )) +
       annotate("rect",
-        xmin = 10, xmax = 30, ymin = 95, ymax = Inf,
-        fill = "#2DC653", alpha = 0.08
+        xmin = 10, xmax = 30, ymin = 95, ymax = 120,
+        fill = "#2DC653", alpha = 0.15, color = "#2DC653",
+        linetype = "dashed", linewidth = 0.4
       ) +
-      annotate("text", x = 20, y = 117, label = "Barrel Zone",
+      annotate("text", x = 20, y = 122, label = "Barrel Zone",
                color = "#2DC653", size = 3.5, fontface = "bold") +
-      geom_point(alpha = 0.7, size = 2) +
+      geom_point(alpha = 0.7, size = 2.5) +
       scale_color_manual(values = result_colors) +
+      scale_x_continuous(limits = c(-40, 50)) +
+      scale_y_continuous(limits = c(40, 125)) +
       labs(
         title = "Exit Velocity & Launch Angle",
         x = "Launch Angle (°)", y = "Exit Velocity (mph)", color = NULL
@@ -644,25 +662,30 @@ server <- function(input, output, session) {
       ) %>%
       filter(!is.na(zone_col), !is.na(zone_row)) %>%
       group_by(zone_col, zone_row) %>%
-      summarise(
-        swing_pct = mean(swing), n = n(), .groups = "drop"
+      summarise(swing_pct = mean(swing), n = n(), .groups = "drop") %>%
+      tidyr::complete(
+        zone_col = c("Left","Middle","Right"),
+        zone_row = c("Low","Mid","High")
       )
 
     p <- ggplot(d, aes(
         x = zone_col, y = zone_row, fill = swing_pct,
-        label = scales::percent(swing_pct, accuracy = 1)
+        label = if_else(is.na(swing_pct), "—",
+                        scales::percent(swing_pct, accuracy = 1))
       )) +
       geom_tile(color = "white", linewidth = 0.8) +
-      geom_text(size = 5, fontface = "bold") +
+      geom_text(size = 5, fontface = "bold",
+                color = ifelse(is.na(d$swing_pct), "#999999", "#0a1628")) +
       scale_fill_gradient2(
-        low = "#457B9D", mid = "white", high = "#E63946",
-        midpoint = 0.5, labels = scales::percent_format(), name = "Swing%"
+        low = "#457B9D", mid = "#f3f3f3", high = "#E63946",
+        midpoint = 0.5, na.value = "#f3f3f3",
+        labels = scales::percent_format(), name = "Swing%"
       ) +
       scale_x_discrete(limits = c("Left","Middle","Right")) +
       scale_y_discrete(limits = c("Low","Mid","High")) +
       labs(
         title    = "Swing Rates by Zone",
-        subtitle = "Do hitters swing at the right pitches?",
+        subtitle = "Catcher's-eye view",
         x = NULL, y = NULL
       ) +
       theme_seagulls() + theme(panel.grid = element_blank())
@@ -696,6 +719,7 @@ server <- function(input, output, session) {
   # ── Chart 14: Pitch Vulnerability Heatmap ─────────────────────────────────
   output$plot_pitch_vuln <- renderPlotly({
     req(nrow(fdata()) > 0)
+    all_types <- sort(unique(fdata()$TaggedPitchType))
     d <- fdata() %>%
       group_by(Batter, TaggedPitchType) %>%
       summarise(
@@ -703,7 +727,8 @@ server <- function(input, output, session) {
         n  = n(),
         .groups = "drop"
       ) %>%
-      mutate(wp = if_else(n < 5, NA_real_, wp))
+      tidyr::complete(Batter, TaggedPitchType = all_types) %>%
+      mutate(wp = if_else(is.na(n) | n < 5, NA_real_, wp))
 
     p <- ggplot(d, aes(
         x = TaggedPitchType, y = Batter, fill = wp,
@@ -1106,18 +1131,26 @@ server <- function(input, output, session) {
   output$player_zone <- renderPlotly({
     d <- player_fdata()
     req(nrow(d) > 0)
+    home_plate <- data.frame(
+      x = c(SZ_LEFT, SZ_RIGHT, SZ_RIGHT, 0, SZ_LEFT),
+      y = c(0, 0, -0.25, -0.5, -0.25)
+    )
     p <- ggplot(d, aes(
         x = PlateLocSide, y = PlateLocHeight, color = TaggedPitchType,
         text = paste0(TaggedPitchType, "<br>", round(RelSpeed,1), " mph<br>", PitchCall)
       )) +
-      geom_point(alpha = 0.6, size = 2.5) +
+      geom_polygon(data = home_plate, aes(x = x, y = y),
+                   inherit.aes = FALSE, fill = "#e8e8e8", color = "#888888") +
       annotate("rect", xmin=SZ_LEFT, xmax=SZ_RIGHT, ymin=SZ_BOT, ymax=SZ_TOP,
                fill=NA, color="black", linewidth=0.8) +
+      geom_point(alpha = 0.6, size = 2.5) +
       scale_color_manual(values = PITCH_COLORS, drop = FALSE) +
       scale_x_continuous(limits = c(-2.5, 2.5)) +
-      scale_y_continuous(limits = c(0, 5)) +
-      labs(title="Pitch Location", x="Horizontal (ft)", y="Height (ft)", color=NULL) +
-      theme_seagulls() + coord_fixed()
+      scale_y_continuous(limits = c(-0.6, 5)) +
+      labs(title = "Pitch Location",
+           subtitle = "Catcher's-eye view — you're looking out toward the pitcher",
+           x = "Horizontal (ft)", y = "Height (ft)", color = NULL) +
+      theme_seagulls()
     plotly_white(ggplotly(p, tooltip = "text"))
   })
 
@@ -1346,16 +1379,24 @@ server <- function(input, output, session) {
       ) %>%
       filter(!is.na(zone_col), !is.na(zone_row)) %>%
       group_by(zone_col, zone_row) %>%
-      summarise(swing_pct = mean(swing), .groups = "drop")
+      summarise(swing_pct = mean(swing), n = n(), .groups = "drop") %>%
+      tidyr::complete(
+        zone_col = c("Left","Middle","Right"),
+        zone_row = c("Low","Mid","High")
+      )
     p <- ggplot(ds, aes(x = zone_col, y = zone_row, fill = swing_pct,
-        label = scales::percent(swing_pct, accuracy = 1))) +
+        label = if_else(is.na(swing_pct), "—",
+                        scales::percent(swing_pct, accuracy = 1)))) +
       geom_tile(color = "white", linewidth = 0.8) +
-      geom_text(size = 5, fontface = "bold") +
-      scale_fill_gradient2(low = "#457B9D", mid = "white", high = "#E63946",
-        midpoint = 0.5, labels = scales::percent_format(), name = "Swing%") +
+      geom_text(size = 5, fontface = "bold",
+                color = ifelse(is.na(ds$swing_pct), "#999999", "#0a1628")) +
+      scale_fill_gradient2(low = "#457B9D", mid = "#f3f3f3", high = "#E63946",
+        midpoint = 0.5, na.value = "#f3f3f3",
+        labels = scales::percent_format(), name = "Swing%") +
       scale_x_discrete(limits = c("Left","Middle","Right")) +
       scale_y_discrete(limits = c("Low","Mid","High")) +
-      labs(title = "Swing Rates by Zone", x = NULL, y = NULL) +
+      labs(title = "Swing Rates by Zone",
+           subtitle = "Catcher's-eye view", x = NULL, y = NULL) +
       theme_seagulls() + theme(panel.grid = element_blank())
     plotly_white(ggplotly(p, tooltip = c("x","y","label")))
   })
