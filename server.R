@@ -41,22 +41,22 @@ server <- function(input, output, session) {
   )
 
   user_role <- reactive({
-    req(result_auth$user_auth)
+    req(result_auth$user)
     result_auth$role
   })
 
   user_player_name <- reactive({
-    req(result_auth$user_auth)
+    req(result_auth$user)
     result_auth$player_name
   })
 
   user_player_type <- reactive({
-    req(result_auth$user_auth)
+    req(result_auth$user)
     result_auth$player_type
   })
 
   user_display_name <- reactive({
-    req(result_auth$user_auth)
+    req(result_auth$user)
     result_auth$display_name
   })
 
