@@ -928,4 +928,126 @@ server <- function(input, output, session) {
     plotly_white(ggplotly(p, tooltip="text"))
   })
 
+  # ── Player: hitter section ────────────────────────────────────────────────
+  output$player_hitter_section <- renderUI({
+    d <- player_fdata()
+
+    d_ip <- d %>% filter(PitchCall == "InPlay", !is.na(ExitSpeed))
+    avg_ev <- mean(d_ip$ExitSpeed, na.rm = TRUE)
+    hh     <- hard_hit_pct(d_ip$ExitSpeed)
+
+    # Zone swing%
+    d_zone <- d %>% filter(!is.na(PlateLocSide), !is.na(PlateLocHeight))
+    in_zone <- d_zone$PlateLocSide >= SZ_LEFT & d_zone$PlateLocSide <= SZ_RIGHT &
+               d_zone$PlateLocHeight >= SZ_BOT  & d_zone$PlateLocHeight <= SZ_TOP
+    swings <- d_zone$PitchCall %in% c("StrikeSwinging","FoulBallNotFieldable",
+                                       "FoulBallFieldable","InPlay")
+    swing_zone <- if (sum(in_zone) > 0) sum(in_zone & swings) / sum(in_zone) else NA_real_
+
+    ooz <- !in_zone
+    chase <- if (sum(ooz) > 0) sum(ooz & swings) / sum(ooz) else NA_real_
+
+    fmt_ev  <- function(x) if (is.na(x)) "—" else paste0(round(x, 1), " mph")
+    fmt_pct <- function(x) if (is.na(x)) "—" else scales::percent(x, accuracy = 1)
+
+    tagList(
+      tags$h6("Hitting", style = "color:#0a1628; font-weight:600; margin:12px 0 8px;"),
+      layout_columns(
+        col_widths = breakpoints(sm = 6, md = 3),
+        stat_tile("Avg Exit Velo", fmt_ev(avg_ev),
+                  tile_class(avg_ev, 92, 82)),
+        stat_tile("Hard Hit%", fmt_pct(hh),
+                  tile_class(hh, 0.40, 0.25)),
+        stat_tile("Zone Swing%", fmt_pct(swing_zone),
+                  tile_class(swing_zone, 0.70, 0.00)),
+        stat_tile("Chase%", fmt_pct(chase),
+                  tile_class(chase, 0.25, 0.35, hi_good = FALSE))
+      ),
+      layout_columns(
+        col_widths = breakpoints(sm = 12, md = 4),
+        plotlyOutput("player_spray",       height = "360px"),
+        plotlyOutput("player_swing_zones", height = "360px"),
+        plotlyOutput("player_hit_types",   height = "360px")
+      )
+    )
+  })
+
+  output$player_spray <- renderPlotly({
+    d <- player_fdata() %>%
+      filter(!is.na(Direction), !is.na(Distance),
+             PlayResult %in% c("Single","Double","Triple","HomeRun","Out")) %>%
+      mutate(spray_x = Distance * sin(Direction * pi / 180),
+             spray_y = Distance * cos(Direction * pi / 180))
+    req(nrow(d) > 0)
+    hit_colors <- c(Single = "#2DC653", Double = "#F5C518",
+                    Triple = "#FF8C00", HomeRun = "#E63946", Out = "#AAAAAA")
+    p <- ggplot(d, aes(x = spray_x, y = spray_y, color = PlayResult,
+        text = paste0(PlayResult, "<br>", round(Distance, 0), " ft"))) +
+      annotate("segment", x = 0, xend = -233, y = 0, yend = 233,
+               color = "gray70", linewidth = 0.5) +
+      annotate("segment", x = 0, xend =  233, y = 0, yend = 233,
+               color = "gray70", linewidth = 0.5) +
+      annotate("path",
+        x = 400 * sin(seq(-45, 45, length.out = 100) * pi / 180),
+        y = 400 * cos(seq(-45, 45, length.out = 100) * pi / 180),
+        color = "gray70", linewidth = 0.5) +
+      geom_point(alpha = 0.8, size = 3) +
+      scale_color_manual(values = hit_colors) +
+      coord_fixed(xlim = c(-350, 350), ylim = c(0, 430)) +
+      labs(title = "Where the Ball Was Hit", x = NULL, y = NULL, color = NULL) +
+      theme_seagulls() +
+      theme(axis.text = element_blank(), panel.grid = element_blank())
+    plotly_white(ggplotly(p, tooltip = "text"))
+  })
+
+  output$player_swing_zones <- renderPlotly({
+    d <- player_fdata()
+    req(nrow(d) > 0)
+    zone_w <- (SZ_RIGHT - SZ_LEFT) / 3
+    zone_h <- (SZ_TOP   - SZ_BOT)  / 3
+    ds <- d %>%
+      filter(!is.na(PlateLocSide), !is.na(PlateLocHeight)) %>%
+      mutate(
+        zone_col = cut(PlateLocSide,
+          breaks = c(-Inf, SZ_LEFT + zone_w, SZ_LEFT + 2 * zone_w, Inf),
+          labels = c("Left","Middle","Right")),
+        zone_row = cut(PlateLocHeight,
+          breaks = c(-Inf, SZ_BOT + zone_h, SZ_BOT + 2 * zone_h, Inf),
+          labels = c("Low","Mid","High")),
+        swing = PitchCall %in% c("StrikeSwinging","FoulBallNotFieldable",
+                                  "FoulBallFieldable","InPlay")
+      ) %>%
+      filter(!is.na(zone_col), !is.na(zone_row)) %>%
+      group_by(zone_col, zone_row) %>%
+      summarise(swing_pct = mean(swing), .groups = "drop")
+    p <- ggplot(ds, aes(x = zone_col, y = zone_row, fill = swing_pct,
+        label = scales::percent(swing_pct, accuracy = 1))) +
+      geom_tile(color = "white", linewidth = 0.8) +
+      geom_text(size = 5, fontface = "bold") +
+      scale_fill_gradient2(low = "#457B9D", mid = "white", high = "#E63946",
+        midpoint = 0.5, labels = scales::percent_format(), name = "Swing%") +
+      scale_x_discrete(limits = c("Left","Middle","Right")) +
+      scale_y_discrete(limits = c("Low","Mid","High")) +
+      labs(title = "Swing Rates by Zone", x = NULL, y = NULL) +
+      theme_seagulls() + theme(panel.grid = element_blank())
+    plotly_white(ggplotly(p, tooltip = c("x","y","label")))
+  })
+
+  output$player_hit_types <- renderPlotly({
+    d <- player_fdata() %>% filter(TaggedHitType %in% BIP_TYPES)
+    req(nrow(d) > 0)
+    bip_colors <- c(GroundBall = "#8B4513", FlyBall  = "#457B9D",
+                    LineDrive  = "#2DC653", Popup    = "#AAAAAA")
+    ds <- d %>% count(TaggedHitType) %>% mutate(pct = n / sum(n))
+    p <- ggplot(ds, aes(x = "", y = pct, fill = TaggedHitType,
+        text = paste0(TaggedHitType, ": ", scales::percent(pct, accuracy = 1)))) +
+      geom_col(width = 1) +
+      scale_fill_manual(values = bip_colors) +
+      scale_y_continuous(labels = scales::percent_format()) +
+      coord_flip() +
+      labs(title = "Batted Ball Types", x = NULL, y = "Proportion", fill = NULL) +
+      theme_seagulls() + theme(axis.text.y = element_blank())
+    plotly_white(ggplotly(p, tooltip = "text"))
+  })
+
 }
