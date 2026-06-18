@@ -44,38 +44,33 @@ server <- function(input, output, session) {
 
   app_data <- reactiveVal(data)
 
-  # ── Game chip selector ─────────────────────────────────────────────────────
-  output$game_selector <- renderUI({
-    req(user_role() == "coach")
-    dates  <- sort(unique(app_data()$Date), decreasing = TRUE)
-    labels <- format(dates, "%b %d")
-    sel    <- if (is.null(input$selected_game_chip)) "Season" else input$selected_game_chip
-
-    make_chip <- function(value, label) {
-      active <- identical(sel, value)
-      tags$button(
-        label,
-        class   = paste("btn btn-sm", if (active) "btn-dark" else "btn-outline-secondary"),
-        onclick = sprintf(
-          "Shiny.setInputValue('selected_game_chip','%s',{priority:'event'})", value
-        )
-      )
-    }
-
-    tagList(
-      make_chip("Season", "Season"),
-      make_chip("Last 5", "Last 5"),
-      lapply(seq_along(dates), function(i) make_chip(as.character(dates[i]), labels[i]))
-    )
+  # ── Season / game window reactives ────────────────────────────────────────
+  season_games <- reactive({
+    req(input$season)
+    app_data() %>%
+      filter(Season == input$season) %>%
+      pull(Date) %>% unique() %>% sort(decreasing = TRUE)
   })
 
-  selected_game_range <- reactive({
-    sel       <- if (is.null(input$selected_game_chip)) "Season" else input$selected_game_chip
-    all_dates <- sort(unique(app_data()$Date), decreasing = TRUE)
-    switch(sel,
-      "Season" = NULL,
-      "Last 5" = head(all_dates, 5L),
-      as.Date(sel)
+  observeEvent(season_games(), {
+    req(user_role() == "coach")
+    g      <- season_games()
+    labels <- format(g, "%b %d, %Y")
+    updatePickerInput(session, "custom_games",
+      choices  = setNames(as.character(g), labels),
+      selected = character(0)
+    )
+  }, ignoreNULL = TRUE)
+
+  selected_games <- reactive({
+    req(input$season, input$game_window)
+    g <- season_games()
+    switch(input$game_window,
+      "Last 5"      = head(g, 5L),
+      "Last 10"     = head(g, 10L),
+      "Full Season" = g,
+      "Custom"      = { req(input$custom_games); as.Date(input$custom_games) },
+      g
     )
   })
 
@@ -126,12 +121,7 @@ server <- function(input, output, session) {
     }
   })
 
-  # ── Coach: dynamic filter initialisation ──────────────────────────────────
-  observeEvent(user_role(), {
-    req(user_role() == "coach")
-    pt <- sort(unique(app_data()$TaggedPitchType[app_data()$TaggedPitchType != "Undefined"]))
-    updatePickerInput(session, "pitch_types", choices = pt, selected = pt)
-  }, once = TRUE)
+  # pitch_types choices are static categories — no dynamic init needed
 
   # Updates player dropdown whenever view mode changes
   observeEvent(input$view_mode, {
@@ -152,12 +142,12 @@ server <- function(input, output, session) {
     req(user_role() == "coach")
     req(input$pitch_types, input$count, input$innings)
 
-    game_dates <- selected_game_range()
+    game_dates <- selected_games()
     d <- app_data() %>%
       filter(
-        if (!is.null(game_dates)) Date %in% game_dates else TRUE,
-        TaggedPitchType %in% input$pitch_types,
-        TaggedPitchType != "Undefined",
+        Date %in% game_dates,
+        PitchCategory %in% input$pitch_types,
+        PitchCategory != "Undefined",
         Inning >= input$innings[1],
         Inning <= input$innings[2]
       )
@@ -180,13 +170,6 @@ server <- function(input, output, session) {
     d
   })
 
-  group_col <- reactive({
-    if (isTRUE(input$pitch_group_mode == "Category")) "PitchCategory" else "TaggedPitchType"
-  })
-  group_colors <- reactive({
-    if (isTRUE(input$pitch_group_mode == "Category")) PITCH_CATEGORY_COLORS else PITCH_COLORS
-  })
-
   # ── Player filtered reactive ───────────────────────────────────────────────
   player_fdata_base <- reactive({
     req(user_role() == "player")
@@ -198,47 +181,105 @@ server <- function(input, output, session) {
       filter(.data[[col]] == name, TaggedPitchType != "Undefined")
   })
 
-  # ── Chart 1: Strike Zone Map ───────────────────────────────────────────────
-  output$plot_zone <- renderPlotly({
+  # ── Per-Pitch-Type Density Cards ──────────────────────────────────────────
+  output$plot_density_cards <- renderPlotly({
     req(nrow(fdata()) > 0)
-    home_plate <- data.frame(
-      x = c(SZ_LEFT, SZ_RIGHT, SZ_RIGHT, 0, SZ_LEFT),
-      y = c(0, 0, -0.25, -0.5, -0.25)
-    )
-    p <- ggplot(fdata(), aes(
-        x = PlateLocSide, y = PlateLocHeight,
-        color = TaggedPitchType,
-        text = paste0("Pitcher: ", Pitcher,
-                      "<br>Type: ", TaggedPitchType,
-                      "<br>Speed: ", round(RelSpeed, 1), " mph",
-                      "<br>Result: ", PitchCall)
-      )) +
-      geom_polygon(data = home_plate, aes(x = x, y = y),
-                   inherit.aes = FALSE, fill = "#e8e8e8", color = "#888888") +
-      annotate("rect",
-        xmin = SZ_LEFT, xmax = SZ_RIGHT,
-        ymin = SZ_BOT,  ymax = SZ_TOP,
-        fill = NA, color = "black", linewidth = 0.8
-      ) +
-      geom_point(alpha = 0.55, size = 2) +
-      scale_color_manual(values = PITCH_COLORS, drop = FALSE) +
-      scale_x_continuous(limits = c(-2.5, 2.5)) +
-      scale_y_continuous(limits = c(-0.6, 5)) +
-      labs(
-        title    = "Pitch Location Map",
-        subtitle = "Catcher's-eye view — you're looking out toward the pitcher",
-        color    = NULL, x = "Horizontal (ft)", y = "Height (ft)"
-      ) +
-      theme_seagulls()
-    plotly_clean(ggplotly(p, tooltip = "text"))
+    d_all <- fdata() %>%
+      filter(!is.na(PlateLocSide), !is.na(PlateLocHeight),
+             TaggedPitchType != "Undefined")
+
+    if (nrow(d_all) == 0) {
+      return(plot_ly() %>%
+        add_annotations(text = "No pitch location data available.",
+                        x = 0.5, y = 0.5, xref = "paper", yref = "paper",
+                        showarrow = FALSE, font = list(size = 13, color = "#64748B")) %>%
+        layout(paper_bgcolor = "white", xaxis = list(visible = FALSE),
+               yaxis = list(visible = FALSE)) %>%
+        config(displayModeBar = FALSE))
+    }
+
+    total_n    <- nrow(d_all)
+    types_keep <- d_all %>%
+      count(TaggedPitchType) %>%
+      filter(n >= 15) %>%
+      arrange(match(TaggedPitchType, names(PITCH_COLORS))) %>%
+      pull(TaggedPitchType)
+
+    if (length(types_keep) == 0) {
+      return(plot_ly() %>%
+        add_annotations(text = "No pitch types with 15+ pitches in this sample.",
+                        x = 0.5, y = 0.5, xref = "paper", yref = "paper",
+                        showarrow = FALSE, font = list(size = 13, color = "#64748B")) %>%
+        layout(paper_bgcolor = "white", xaxis = list(visible = FALSE),
+               yaxis = list(visible = FALSE)) %>%
+        config(displayModeBar = FALSE))
+    }
+
+    hp_x <- c(SZ_LEFT, SZ_RIGHT, SZ_RIGHT, 0, SZ_LEFT, SZ_LEFT)
+    hp_y <- c(0, 0, -0.25, -0.5, -0.25, 0)
+
+    make_card <- function(pt) {
+      d     <- d_all %>% filter(TaggedPitchType == pt)
+      n_pt  <- nrow(d)
+      pct_pt <- round(n_pt / total_n * 100)
+
+      plot_ly() %>%
+        add_trace(
+          x         = d$PlateLocSide,
+          y         = d$PlateLocHeight,
+          type      = "histogram2dcontour",
+          colorscale = list(c(0, "#EFF6FF"), c(0.4, "#3B82F6"), c(1, "#DC2626")),
+          contours  = list(coloring = "fill", showlabels = FALSE),
+          ncontours = 10,
+          line      = list(width = 0),
+          showscale = FALSE,
+          hoverinfo = "none"
+        ) %>%
+        add_shape(
+          type = "rect",
+          x0 = SZ_LEFT, x1 = SZ_RIGHT, y0 = SZ_BOT, y1 = SZ_TOP,
+          line = list(color = "#555555", dash = "dash", width = 1.5),
+          fillcolor = "rgba(0,0,0,0)"
+        ) %>%
+        add_trace(
+          x = hp_x, y = hp_y,
+          type = "scatter", mode = "lines",
+          fill = "toself", fillcolor = "rgba(210,210,210,0.8)",
+          line = list(color = "#999999", width = 1),
+          showlegend = FALSE, hoverinfo = "none"
+        ) %>%
+        layout(
+          title = list(
+            text   = paste0("<b>", pt, "</b><br>",
+                            "<sup>", n_pt, " pitches (", pct_pt, "%)</sup>"),
+            font   = list(size = 12, color = "#1A202C"),
+            x      = 0.5
+          ),
+          xaxis = list(range = c(-2.5, 2.5), visible = FALSE,
+                       scaleanchor = "y", scaleratio = 1, fixedrange = TRUE),
+          yaxis = list(range = c(-0.7, 5.0), visible = FALSE, fixedrange = TRUE),
+          paper_bgcolor = "white", plot_bgcolor = "white",
+          margin = list(t = 55, b = 10, l = 10, r = 10),
+          showlegend = FALSE
+        ) %>%
+        config(displayModeBar = FALSE)
+    }
+
+    plots  <- lapply(types_keep, make_card)
+    n_cols <- min(3L, length(plots))
+    n_rows <- ceiling(length(plots) / n_cols)
+
+    subplot(plots, nrows = n_rows, shareX = FALSE, shareY = FALSE,
+            margin = 0.05, titleX = FALSE, titleY = FALSE) %>%
+      layout(paper_bgcolor = "white") %>%
+      config(displayModeBar = FALSE)
   })
 
   # ── Chart 2: Pitch Arsenal Donut ──────────────────────────────────────────
   output$plot_arsenal <- renderPlotly({
     req(nrow(fdata()) > 0)
-    gcol <- group_col()
     d <- fdata() %>%
-      group_by(.data[[gcol]]) %>%
+      group_by(PitchCategory) %>%
       summarise(
         n        = n(),
         avg_spd  = round(mean(RelSpeed,  na.rm = TRUE), 1),
@@ -247,12 +288,11 @@ server <- function(input, output, session) {
       ) %>%
       mutate(pct = n / sum(n))
 
-    cols <- group_colors()
     plot_ly(d,
-      labels = d[[gcol]], values = ~n,
+      labels = ~PitchCategory, values = ~n,
       type   = "pie", hole = 0.5,
-      marker = list(colors = unname(cols[d[[gcol]]])),
-      text   = ~paste0(d[[gcol]], "<br>", n, " pitches (",
+      marker = list(colors = unname(PITCH_CATEGORY_COLORS[d$PitchCategory])),
+      text   = ~paste0(PitchCategory, "<br>", n, " pitches (",
                        scales::percent(pct, accuracy = 1), ")<br>",
                        avg_spd, " mph | ", avg_spin, " rpm"),
       hoverinfo = "text",
@@ -270,10 +310,9 @@ server <- function(input, output, session) {
   # ── Arsenal overview table — coaches see this first ───────────────────────
   output$table_arsenal <- DT::renderDT({
     req(nrow(fdata()) > 0)
-    gcol   <- group_col()
-    total  <- nrow(fdata())
+    total <- nrow(fdata())
     d <- fdata() %>%
-      group_by(Pitch = .data[[gcol]]) %>%
+      group_by(Pitch = PitchCategory) %>%
       summarise(
         `Usage%`   = scales::percent(n() / total, accuracy = 1),
         `Avg Velo` = round(mean(RelSpeed,           na.rm = TRUE), 1),
@@ -285,63 +324,71 @@ server <- function(input, output, session) {
       ) %>%
       arrange(desc(as.numeric(sub("%", "", `Usage%`))))
 
-    DT::datatable(d, rownames = FALSE,
+    d <- d %>%
+      mutate(Pitch = paste0(
+        '<span style="display:inline-block;width:10px;height:10px;border-radius:50%;',
+        'vertical-align:middle;margin-right:7px;background:',
+        vapply(as.character(Pitch), function(x) {
+          col <- PITCH_CATEGORY_COLORS[[x]]
+          if (is.null(col) || is.na(col)) "#AAAAAA" else col
+        }, character(1)),
+        ';"></span>', Pitch
+      ))
+
+    DT::datatable(d, rownames = FALSE, escape = FALSE,
       options = list(pageLength = 15, dom = "t", ordering = TRUE),
       class   = "compact stripe"
     ) %>%
-      DT::formatStyle("Avg Velo",
-        background = DT::styleInterval(c(78, 85), c("#FEF3C7", "white", "#DBEAFE"))
-      )
+      DT::formatRound(c("Avg Velo", "Max Velo", "Avg IVB", "Avg HB"), digits = 1) %>%
+      DT::formatRound("Avg Spin", digits = 0, mark = ",") %>%
+      DT::formatStyle(columns = names(d), textAlign = "right")
   })
 
-  # ── Chart 3: Velocity & Spin by Pitch Type ────────────────────────────────
-  output$plot_velo_spin <- renderPlotly({
+  # ── Zone Profile (13-zone) ────────────────────────────────────────────────
+  output$plot_zone13 <- renderPlotly({
     req(nrow(fdata()) > 0)
     d <- fdata() %>%
-      group_by(TaggedPitchType) %>%
-      summarise(
-        avg_spd  = mean(RelSpeed,  na.rm = TRUE),
-        max_spd  = max(RelSpeed,   na.rm = TRUE),
-        avg_spin = mean(SpinRate,  na.rm = TRUE),
-        .groups  = "drop"
+      mutate(zone = classify_zone13(PlateLocSide, PlateLocHeight)) %>%
+      filter(!is.na(zone)) %>%
+      count(zone) %>%
+      mutate(pct = n / sum(n)) %>%
+      right_join(ZONE13_COORDS, by = "zone") %>%
+      mutate(
+        pct   = tidyr::replace_na(pct, 0),
+        label = scales::percent(pct, accuracy = 1),
+        is_outer = zone %in% c("11","12","13","14"),
+        w = ifelse(is_outer, 1.1, 0.9),
+        h = ifelse(is_outer, 1.5, 0.9),
+        xmin = x - w / 2, xmax = x + w / 2,
+        ymin = y - h / 2, ymax = y + h / 2,
+        text_dark  = ifelse(pct < 0.12, label, ""),
+        text_light = ifelse(pct >= 0.12, label, "")
+      )
+
+    p <- ggplot(d) +
+      geom_rect(aes(xmin = xmin, xmax = xmax, ymin = ymin, ymax = ymax,
+                    fill = pct, text = paste0("Zone ", zone, ": ", label)),
+                color = "white", linewidth = 1.5) +
+      geom_text(aes(x = x, y = y, label = text_dark),
+                color = "#1A202C", fontface = "bold", size = 4) +
+      geom_text(aes(x = x, y = y, label = text_light),
+                color = "white", fontface = "bold", size = 4) +
+      annotate("rect", xmin = -1.5, xmax = 1.5, ymin = -0.5, ymax = 2.5,
+               fill = NA, color = "#1A202C", linewidth = 1.5) +
+      scale_fill_gradient(low = "#F1F5F9", high = "#015294", guide = "none") +
+      labs(title    = "Zone from Catcher's Perspective",
+           subtitle = "% of pitches by zone",
+           x = NULL, y = NULL) +
+      theme_seagulls() +
+      theme(axis.text = element_blank(), panel.grid = element_blank())
+
+    ggplotly(p, tooltip = "text") %>%
+      layout(
+        yaxis         = list(scaleanchor = "x", scaleratio = 1),
+        paper_bgcolor = "white", plot_bgcolor = "white",
+        font          = list(color = "#1A202C")
       ) %>%
-      arrange(avg_spd)
-
-    p_spd <- ggplot(d, aes(
-        x = avg_spd, y = reorder(TaggedPitchType, avg_spd),
-        fill = TaggedPitchType
-      )) +
-      geom_col(width = 0.6) +
-      geom_text(aes(label = round(avg_spd, 1)),
-                hjust = 1.1, color = "white", fontface = "bold", size = 3.5) +
-      geom_point(aes(x = max_spd), shape = 23, size = 3.5,
-                 fill = "white", color = "#0a1628", stroke = 1) +
-      geom_text(aes(x = max_spd, label = paste0("Top: ", round(max_spd, 1))),
-                hjust = -0.15, color = "#0a1628", fontface = "bold", size = 3.2) +
-      scale_fill_manual(values = PITCH_COLORS) +
-      scale_x_continuous(expand = expansion(mult = c(0, 0.18))) +
-      labs(x = "Avg Velocity (mph)", y = NULL, title = "Avg Velocity",
-           caption = "◊ marker = top velocity") +
-      theme_seagulls() + theme(legend.position = "none")
-
-    p_spin <- ggplot(d, aes(
-        x = avg_spin, y = reorder(TaggedPitchType, avg_spd),
-        fill = TaggedPitchType
-      )) +
-      geom_col(width = 0.6) +
-      geom_text(aes(label = round(avg_spin, 0)),
-                hjust = 1.1, color = "white", fontface = "bold", size = 3.5) +
-      scale_fill_manual(values = PITCH_COLORS) +
-      scale_x_continuous(expand = expansion(mult = c(0, 0.05))) +
-      labs(x = "Avg Spin Rate (rpm)", y = NULL, title = "Avg Spin Rate") +
-      theme_seagulls() + theme(legend.position = "none")
-
-    subplot(
-      plotly_clean(ggplotly(p_spd,  tooltip = "none")),
-      plotly_clean(ggplotly(p_spin, tooltip = "none")),
-      nrows = 1, shareY = TRUE, titleX = TRUE
-    ) %>% layout(paper_bgcolor = "white", plot_bgcolor = "white",
-                  font = list(color = "#0a1628"))
+      config(displayModeBar = FALSE)
   })
 
   # ── Chart 4: Pitcher Leaderboard ──────────────────────────────────────────
@@ -394,9 +441,8 @@ server <- function(input, output, session) {
   # ── Movement Profile — Savant-style with reference rings ──────────────────
   output$plot_movement <- renderPlotly({
     req(nrow(fdata()) > 0)
-    gcol <- group_col()
     d <- fdata() %>%
-      group_by(.data[[gcol]]) %>%
+      group_by(PitchCategory) %>%
       summarise(
         HorzBreak        = mean(HorzBreak,        na.rm = TRUE),
         InducedVertBreak = mean(InducedVertBreak, na.rm = TRUE),
@@ -405,12 +451,11 @@ server <- function(input, output, session) {
       )
 
     rings <- dplyr::bind_rows(lapply(c(6, 12, 18), ring_df))
-    cols  <- group_colors()
 
     p <- ggplot(d, aes(
         x = HorzBreak, y = InducedVertBreak,
-        color = .data[[gcol]], size = n,
-        label = .data[[gcol]]
+        color = PitchCategory, size = n,
+        label = PitchCategory
       )) +
       geom_path(data = rings, aes(x = x, y = y, group = r),
                 color = "#D1D5DB", linetype = "dashed", linewidth = 0.4,
@@ -418,7 +463,7 @@ server <- function(input, output, session) {
       geom_hline(yintercept = 0, color = "#CBD5E1", linewidth = 0.5) +
       geom_vline(xintercept = 0, color = "#CBD5E1", linewidth = 0.5) +
       geom_point(alpha = 0.85) +
-      scale_color_manual(values = cols) +
+      scale_color_manual(values = PITCH_CATEGORY_COLORS) +
       scale_size_continuous(range = c(4, 12)) +
       coord_fixed() +
       labs(
@@ -428,154 +473,69 @@ server <- function(input, output, session) {
         color = NULL, size = "Pitches"
       ) +
       theme_seagulls() +
-      theme(legend.position = if (n_distinct(d[[gcol]]) <= 1) "none" else "right")
+      theme(legend.position = if (n_distinct(d$PitchCategory) <= 1) "none" else "right")
     plotly_clean(ggplotly(p, tooltip = c("label", "x", "y", "size")))
   })
 
-  # ── Chart 6: Release Point Scatter ────────────────────────────────────────
-  output$plot_release <- renderPlotly({
+
+  # ── Pitch Usage Trend ────────────────────────────────────────────────────
+  output$plot_usage_trend <- renderPlotly({
     req(nrow(fdata()) > 0)
-    ellipse_data <- fdata() %>%
-      group_by(TaggedPitchType) %>%
-      filter(n() >= 8) %>%
-      ungroup()
-    p <- ggplot(fdata(), aes(x = RelSide, y = RelHeight, color = TaggedPitchType)) +
-      geom_point(alpha = 0.5, size = 1.5) +
-      { if (nrow(ellipse_data) > 0)
-          stat_ellipse(data = ellipse_data, aes(group = TaggedPitchType),
-                       level = 0.68, linewidth = 0.8)
-      } +
-      scale_color_manual(values = PITCH_COLORS) +
-      labs(
-        title    = "Release Point",
-        subtitle = "Tighter clusters = more consistent mechanics",
-        x = "Horizontal (ft)", y = "Height (ft)", color = NULL
-      ) +
-      theme_seagulls() +
-      theme(legend.position = if (n_distinct(fdata()$TaggedPitchType) <= 1) "none" else "right")
-    plotly_clean(ggplotly(p, tooltip = c("x", "y", "colour")))
-  })
-
-  # ── Chart 7: Pitch Outcome Stacked Bar ────────────────────────────────────
-  output$plot_outcomes <- renderPlotly({
-    req(nrow(fdata()) > 0)
-
-    outcome_bucket <- function(call) {
-      case_when(
-        call %in% c("BallCalled","BallinDirt","HitByPitch") ~ "Ball",
-        call == "StrikeCalled"                               ~ "Called Strike",
-        call %in% c("FoulBallNotFieldable","FoulBallFieldable") ~ "Foul",
-        call == "StrikeSwinging"                             ~ "Whiff",
-        call == "InPlay"                                     ~ "In Play",
-        TRUE                                                 ~ "Other"
-      )
-    }
-
     d <- fdata() %>%
-      mutate(Outcome = outcome_bucket(PitchCall)) %>%
-      group_by(TaggedPitchType) %>%
-      mutate(csw = csw_pct(PitchCall)) %>%
-      ungroup() %>%
-      count(TaggedPitchType, Outcome, csw) %>%
-      group_by(TaggedPitchType) %>%
-      mutate(prop = n / sum(n)) %>%
+      group_by(Date, Category = PitchCategory) %>%
+      summarise(n_pitches = n(), whiff = whiff_pct(PitchCall), .groups = "drop") %>%
+      group_by(Date) %>%
+      mutate(usage_pct = n_pitches / sum(n_pitches)) %>%
       ungroup()
-
-    pt_order <- d %>%
-      distinct(TaggedPitchType, csw) %>%
-      arrange(desc(csw)) %>%
-      pull(TaggedPitchType)
-
-    d$TaggedPitchType <- factor(d$TaggedPitchType, levels = pt_order)
-
-    outcome_colors <- c(
-      Ball = "#ADB5BD", `Called Strike` = "#457B9D",
-      Foul = "#E9C46A", Whiff = "#E63946", `In Play` = "#2DC653"
-    )
 
     p <- ggplot(d, aes(
-        x = TaggedPitchType, y = prop, fill = Outcome,
-        text = paste0(Outcome, ": ", scales::percent(prop, accuracy = 1))
+        x = Date, y = usage_pct, color = Category, group = Category,
+        text = paste0(
+          Category, "<br>", format(Date, "%b %d"),
+          "<br>Usage: ", scales::percent(usage_pct, accuracy = 1),
+          "<br>Whiff%: ", if_else(is.na(whiff), "—",
+                                  scales::percent(whiff, accuracy = 1))
+        )
       )) +
-      geom_col(position = "fill") +
-      scale_fill_manual(values = outcome_colors) +
+      geom_line(linewidth = 1) +
+      geom_point(size = 2.5) +
+      scale_color_manual(values = PITCH_CATEGORY_COLORS) +
       scale_y_continuous(labels = scales::percent_format()) +
-      coord_flip() +
-      labs(
-        title = "What Happened on Each Pitch Type",
-        x = NULL, y = "Proportion", fill = NULL
-      ) +
+      labs(title = "Pitch Usage Over Time",
+           subtitle = "Hover a point for that game's usage and whiff%",
+           x = NULL, y = "Usage%", color = NULL) +
       theme_seagulls()
     plotly_clean(ggplotly(p, tooltip = "text"))
   })
 
-  # ── Chart 8: Count Heatmap ────────────────────────────────────────────────
-  output$plot_count_heatmap <- renderPlotly({
-    req(nrow(fdata()) > 0)
-
-    counts_grid <- expand.grid(
-      Balls = 0:3, Strikes = 0:2, stringsAsFactors = FALSE
-    )
-
-    d <- fdata() %>%
-      group_by(Balls, Strikes) %>%
-      summarise(spct = strike_pct(PitchCall), n = n(), .groups = "drop") %>%
-      right_join(counts_grid, by = c("Balls", "Strikes")) %>%
-      mutate(
-        label = if_else(is.na(spct), "—", scales::percent(spct, accuracy = 1)),
-        Count = paste0(Balls, "-", Strikes)
-      )
-
-    p <- ggplot(d, aes(
-        x = factor(Strikes), y = factor(Balls, levels = rev(0:3)),
-        fill = spct, label = label
-      )) +
-      geom_tile(color = "white", linewidth = 0.5) +
-      geom_text(size = 4.5, fontface = "bold") +
-      scale_fill_gradient2(
-        low = "#E63946", mid = "white", high = "#2DC653",
-        midpoint = 0.60, na.value = "#f0f0f0",
-        labels = scales::percent_format(), name = "Strike%"
-      ) +
-      labs(
-        title = "Strike% by Count",
-        x = "Strikes", y = "Balls"
-      ) +
-      theme_seagulls() +
-      theme(panel.grid = element_blank(), legend.position = "right")
-    plotly_clean(ggplotly(p, tooltip = c("label", "x", "y")))
-  })
-
-  # ── Chart 9: Spray Chart (coach — TaggedHitType + ExitSpeed sizing) ──────────
+  # ── Chart 9: Spray Chart (coach — PlayResult coloring + ExitSpeed sizing) ────
   output$plot_spray <- renderPlotly({
     req(nrow(fdata()) > 0)
     d <- fdata() %>%
       filter(!is.na(Direction), !is.na(Distance),
-             TaggedHitType %in% BIP_TYPES) %>%
+             PlayResult %in% c("Single","Double","Triple","HomeRun","Out")) %>%
       mutate(
-        spray_x = Distance * sin(Direction * pi / 180),
-        spray_y = Distance * cos(Direction * pi / 180),
+        spray_x  = Distance * sin(Direction * pi / 180),
+        spray_y  = Distance * cos(Direction * pi / 180),
         ev_label = ifelse(is.na(ExitSpeed), "",
                           paste0("<br>EV: ", round(ExitSpeed, 1), " mph"))
       )
     req(nrow(d) > 0)
 
-    bip_colors <- c(
-      GroundBall = "#D97706", FlyBall  = "#2563EB",
-      LineDrive  = "#16A34A", Popup    = "#9CA3AF"
-    )
+    result_colors <- c(Single = "#2DC653", Double = "#F5C518",
+                       Triple = "#FF8C00", HomeRun = "#E63946", Out = "#AAAAAA")
     outline <- field_outline_df()
 
     p <- ggplot(d, aes(
-        x = spray_x, y = spray_y, color = TaggedHitType, size = ExitSpeed,
-        text = paste0(Batter, "<br>", TaggedHitType, "<br>",
+        x = spray_x, y = spray_y, color = PlayResult, size = ExitSpeed,
+        text = paste0(Batter, "<br>", PlayResult, "<br>",
                       round(Distance, 0), " ft", ev_label)
       )) +
       geom_path(data = outline, aes(x = x, y = y), inherit.aes = FALSE,
                 color = "gray70", linewidth = 0.5) +
       geom_point(alpha = 0.72) +
-      scale_color_manual(values = bip_colors) +
-      scale_size_continuous(range = c(1.5, 5), guide = "none") +
+      scale_color_manual(values = result_colors) +
+      scale_size_continuous(range = c(1.2, 2.5), guide = "none") +
       coord_fixed(xlim = c(-350, 350), ylim = c(0, 430)) +
       labs(title = "Batted Ball Chart", subtitle = "Size = Exit Velocity",
            x = NULL, y = NULL, color = NULL) +
@@ -584,43 +544,6 @@ server <- function(input, output, session) {
     plotly_clean(ggplotly(p, tooltip = "text"))
   })
 
-  # ── Chart 10: Exit Velocity vs Launch Angle ────────────────────────────────
-  output$plot_ev_la <- renderPlotly({
-    req(nrow(fdata()) > 0)
-    d <- fdata() %>%
-      filter(PitchCall == "InPlay", !is.na(ExitSpeed), !is.na(Angle))
-    req(nrow(d) > 0)
-
-    result_colors <- c(
-      Single = "#2DC653", Double = "#F5C518", Triple = "#FF8C00",
-      HomeRun = "#E63946", Out = "#AAAAAA", Error = "#9B2226",
-      Undefined = "#CCCCCC"
-    )
-
-    p <- ggplot(d, aes(
-        x = Angle, y = ExitSpeed, color = PlayResult,
-        text = paste0(Batter, "<br>", PlayResult,
-                      "<br>EV: ", round(ExitSpeed, 1), " mph",
-                      "<br>LA: ", round(Angle, 1), "°")
-      )) +
-      annotate("rect",
-        xmin = 10, xmax = 30, ymin = 95, ymax = 120,
-        fill = "#2DC653", alpha = 0.15, color = "#2DC653",
-        linetype = "dashed", linewidth = 0.4
-      ) +
-      annotate("text", x = 20, y = 122, label = "Barrel Zone",
-               color = "#2DC653", size = 3.5, fontface = "bold") +
-      geom_point(alpha = 0.7, size = 2.5) +
-      scale_color_manual(values = result_colors) +
-      scale_x_continuous(limits = c(-40, 50)) +
-      scale_y_continuous(limits = c(40, 125)) +
-      labs(
-        title = "Exit Velocity & Launch Angle",
-        x = "Launch Angle (°)", y = "Exit Velocity (mph)", color = NULL
-      ) +
-      theme_seagulls()
-    plotly_clean(ggplotly(p, tooltip = "text"))
-  })
 
   # ── Chart 11: Batter Leaderboard ──────────────────────────────────────────
   output$table_batters <- renderDT({
@@ -672,119 +595,124 @@ server <- function(input, output, session) {
       )
   })
 
-  # ── Chart 12: Swing Decision Heatmap ──────────────────────────────────────
+  # ── Chart 12: Swing Rate by Zone (13-zone) ────────────────────────────────
   output$plot_swing_zones <- renderPlotly({
     req(nrow(fdata()) > 0)
-
-    zone_w <- (SZ_RIGHT - SZ_LEFT) / 3
-    zone_h <- (SZ_TOP   - SZ_BOT)  / 3
-
     d <- fdata() %>%
       filter(!is.na(PlateLocSide), !is.na(PlateLocHeight)) %>%
       mutate(
-        zone_col = cut(PlateLocSide,
-          breaks = c(-Inf, SZ_LEFT + zone_w, SZ_LEFT + 2*zone_w, Inf),
-          labels = c("Left","Middle","Right")
-        ),
-        zone_row = cut(PlateLocHeight,
-          breaks = c(-Inf, SZ_BOT + zone_h, SZ_BOT + 2*zone_h, Inf),
-          labels = c("Low","Mid","High")
-        ),
+        zone  = classify_zone13(PlateLocSide, PlateLocHeight),
         swing = PitchCall %in% c("StrikeSwinging","FoulBallNotFieldable",
                                   "FoulBallFieldable","InPlay")
       ) %>%
-      filter(!is.na(zone_col), !is.na(zone_row)) %>%
-      group_by(zone_col, zone_row) %>%
+      filter(!is.na(zone)) %>%
+      group_by(zone) %>%
       summarise(swing_pct = mean(swing), n = n(), .groups = "drop") %>%
-      tidyr::complete(
-        zone_col = c("Left","Middle","Right"),
-        zone_row = c("Low","Mid","High")
-      )
+      tidyr::complete(zone = ZONE13_COORDS$zone) %>%
+      right_join(ZONE13_COORDS, by = "zone")
 
-    p <- ggplot(d, aes(
-        x = zone_col, y = zone_row, fill = swing_pct,
-        label = if_else(is.na(swing_pct), "—",
-                        scales::percent(swing_pct, accuracy = 1))
-      )) +
-      geom_tile(color = "white", linewidth = 0.8) +
-      geom_text(size = 5, fontface = "bold",
+    p <- ggplot(d, aes(x = x, y = y, fill = swing_pct,
+                        label = if_else(is.na(swing_pct), "—",
+                                        scales::percent(swing_pct, accuracy = 1)))) +
+      geom_tile(width = 0.95, height = 0.95, color = "white", linewidth = 1) +
+      geom_text(fontface = "bold", size = 4,
                 color = ifelse(is.na(d$swing_pct), "#999999", "#0a1628")) +
+      annotate("rect", xmin = -1.5, xmax = 1.5, ymin = -0.5, ymax = 2.5,
+               fill = NA, color = "black", linewidth = 1) +
       scale_fill_gradient2(
         low = "#457B9D", mid = "#f3f3f3", high = "#E63946",
         midpoint = 0.5, na.value = "#f3f3f3",
         labels = scales::percent_format(), name = "Swing%"
       ) +
-      scale_x_discrete(limits = c("Left","Middle","Right")) +
-      scale_y_discrete(limits = c("Low","Mid","High")) +
-      labs(
-        title    = "Swing Rates by Zone",
-        subtitle = "Catcher's-eye view",
-        x = NULL, y = NULL
-      ) +
-      theme_seagulls() + theme(panel.grid = element_blank())
-    plotly_clean(ggplotly(p, tooltip = c("x","y","label")))
-  })
-
-  # ── Chart 13: Hit Type Distribution ───────────────────────────────────────
-  output$plot_hit_types <- renderPlotly({
-    req(nrow(fdata()) > 0)
-    d <- fdata() %>% filter(TaggedHitType %in% BIP_TYPES)
-    req(nrow(d) > 0)
-
-    bip_colors <- c(
-      GroundBall = "#8B4513", FlyBall  = "#457B9D",
-      LineDrive  = "#2DC653", Popup    = "#AAAAAA"
-    )
-
-    p <- ggplot(d, aes(x = Batter, fill = TaggedHitType)) +
-      geom_bar(position = "fill") +
-      scale_fill_manual(values = bip_colors) +
-      scale_y_continuous(labels = scales::percent_format()) +
-      coord_flip() +
-      labs(
-        title = "Batted Ball Type by Hitter",
-        x = NULL, y = "Proportion", fill = NULL
-      ) +
-      theme_seagulls()
-    plotly_clean(ggplotly(p, tooltip = c("x","fill","count")))
-  })
-
-  # ── Chart 14: Pitch Vulnerability Heatmap ─────────────────────────────────
-  output$plot_pitch_vuln <- renderPlotly({
-    req(nrow(fdata()) > 0)
-    all_types <- sort(unique(fdata()$TaggedPitchType))
-    d <- fdata() %>%
-      group_by(Batter, TaggedPitchType) %>%
-      summarise(
-        wp = whiff_pct(PitchCall),
-        n  = n(),
-        .groups = "drop"
+      coord_fixed() +
+      labs(title = "Swing Rates by Zone",
+           subtitle = "Catcher's-eye view — includes chase zones",
+           x = NULL, y = NULL) +
+      theme_seagulls() + theme(axis.text = element_blank(), panel.grid = element_blank())
+    ggplotly(p, tooltip = "label") %>%
+      layout(
+        yaxis         = list(scaleanchor = "x", scaleratio = 1),
+        paper_bgcolor = "white", plot_bgcolor = "white",
+        font = list(color = "#1A202C")
       ) %>%
-      tidyr::complete(Batter, TaggedPitchType = all_types) %>%
-      mutate(wp = if_else(is.na(n) | n < 5, NA_real_, wp))
-
-    p <- ggplot(d, aes(
-        x = TaggedPitchType, y = Batter, fill = wp,
-        label = if_else(is.na(wp), "—", scales::percent(wp, accuracy = 1))
-      )) +
-      geom_tile(color = "white", linewidth = 0.4) +
-      geom_text(size = 3) +
-      scale_fill_gradient2(
-        low = "#2DC653", mid = "white", high = "#E63946",
-        midpoint = 0.25, na.value = "#f0f0f0",
-        labels = scales::percent_format(), name = "Whiff%"
-      ) +
-      labs(
-        title = "Batter Whiff Rate vs. Each Pitch Type",
-        x = NULL, y = NULL
-      ) +
-      theme_seagulls() +
-      theme(axis.text.x = element_text(angle = 30, hjust = 1),
-            panel.grid  = element_blank())
-    plotly_clean(ggplotly(p, tooltip = c("x","y","label")))
+      config(displayModeBar = FALSE)
   })
 
-  # ── Insight Box ───────────────────────────────────────────────────────────
+
+  # ── Quality Contact Density (Hitting Detail) ──────────────────────────────
+  output$plot_quality_contact <- renderPlotly({
+    req(nrow(fdata()) > 0)
+
+    blank <- function(msg) {
+      plot_ly() %>%
+        add_annotations(text = msg, x = 0.5, y = 0.5,
+                        xref = "paper", yref = "paper",
+                        showarrow = FALSE,
+                        font = list(size = 13, color = "#64748B")) %>%
+        layout(
+          title         = list(text = "Quality Contact Zones",
+                               font = list(size = 13, color = "#1A202C")),
+          paper_bgcolor = "white", plot_bgcolor = "white",
+          xaxis = list(visible = FALSE), yaxis = list(visible = FALSE)
+        ) %>%
+        config(displayModeBar = FALSE)
+    }
+
+    if (is.null(input$player) || input$player == "All Players")
+      return(blank("Select a specific batter to see their contact-quality zones."))
+
+    d <- fdata() %>%
+      filter(PitchCall == "InPlay",
+             !is.na(PlateLocSide), !is.na(PlateLocHeight),
+             !is.na(ExitSpeed), ExitSpeed >= 80)
+
+    if (nrow(d) < 10)
+      return(blank(paste0("Not enough hard-contact data for ", input$player,
+                          " in this sample (need ≥ 10 batted balls at 80+ mph).")))
+
+    hp_x <- c(SZ_LEFT, SZ_RIGHT, SZ_RIGHT, 0, SZ_LEFT, SZ_LEFT)
+    hp_y <- c(0, 0, -0.25, -0.5, -0.25, 0)
+
+    plot_ly() %>%
+      add_trace(
+        x         = d$PlateLocSide,
+        y         = d$PlateLocHeight,
+        type      = "histogram2dcontour",
+        colorscale = list(c(0, "#EFF6FF"), c(0.4, "#3B82F6"), c(1, "#DC2626")),
+        contours  = list(coloring = "fill", showlabels = FALSE),
+        ncontours = 10,
+        line      = list(width = 0),
+        showscale = FALSE,
+        hoverinfo = "none"
+      ) %>%
+      add_shape(
+        type = "rect",
+        x0 = SZ_LEFT, x1 = SZ_RIGHT, y0 = SZ_BOT, y1 = SZ_TOP,
+        line = list(color = "#555555", dash = "dash", width = 1.5),
+        fillcolor = "rgba(0,0,0,0)"
+      ) %>%
+      add_trace(
+        x = hp_x, y = hp_y, type = "scatter", mode = "lines",
+        fill = "toself", fillcolor = "rgba(210,210,210,0.8)",
+        line = list(color = "#999999", width = 1),
+        showlegend = FALSE, hoverinfo = "none"
+      ) %>%
+      layout(
+        title = list(
+          text = paste0("<b>Quality Contact Zones — ", input$player, "</b><br>",
+                        "<sup>Pitch locations of batted balls at 80+ mph ",
+                        "(n = ", nrow(d), ")</sup>"),
+          font = list(size = 13, color = "#1A202C"), x = 0.05
+        ),
+        xaxis = list(range = c(-2.5, 2.5), visible = FALSE,
+                     scaleanchor = "y", scaleratio = 1),
+        yaxis = list(range = c(-0.7, 5.0), visible = FALSE),
+        paper_bgcolor = "white", plot_bgcolor = "white",
+        margin = list(t = 80, b = 20, l = 20, r = 20)
+      ) %>%
+      config(displayModeBar = FALSE)
+  })
+
   # ── Coach: Pitching glance row ─────────────────────────────────────────────
   output$coach_pitch_glance <- renderUI({
     req(nrow(fdata()) > 0)
@@ -891,11 +819,14 @@ server <- function(input, output, session) {
         new_data$TaggedPitchType %in% c("Other", NA_character_),
         "Undefined", new_data$TaggedPitchType
       )
-      new_data$Count <- paste0(new_data$Balls, "-", new_data$Strikes)
+      new_data$Count        <- paste0(new_data$Balls, "-", new_data$Strikes)
+      new_data$PitchCategory <- PITCH_CATEGORY_MAP[new_data$TaggedPitchType]
+      new_data$PitchCategory[is.na(new_data$PitchCategory)] <- "Undefined"
+      new_data$PitchCategory <- factor(new_data$PitchCategory,
+        levels = c("Fastball", "Breaking Ball", "Offspeed", "Undefined"))
+      new_data$Season <- "Fall 2025"
       app_data(new_data)
 
-      pt <- sort(unique(new_data$TaggedPitchType[new_data$TaggedPitchType != "Undefined"]))
-      updatePickerInput(session, "pitch_types", choices = pt, selected = pt)
       if (input$view_mode == "Pitching") {
         updatePickerInput(session, "player",
           choices  = c("All Players", sort(unique(new_data$Pitcher))),
@@ -992,8 +923,12 @@ server <- function(input, output, session) {
         style = "display:flex; justify-content:space-between; align-items:center;
                  margin-bottom:16px; padding-bottom:12px; border-bottom:1px solid #eee;",
         div(
-          tags$h5(name, style = "margin:0; color:#0a1628;"),
-          tags$small(paste0("#", jersey, " · ", position), style = "color:#666;")
+          style = "display:flex; align-items:center; gap:12px;",
+          player_photo_tag(user_player_name(), size = "56px"),
+          div(
+            tags$h5(name, style = "margin:0; color:#0a1628;"),
+            tags$small(paste0("#", jersey, " · ", position), style = "color:#666;")
+          )
         ),
         actionButton("logout", "Log Out", class = "btn-sm btn-outline-secondary")
       ),
@@ -1314,42 +1249,42 @@ server <- function(input, output, session) {
   output$player_swing_zones <- renderPlotly({
     d <- player_fdata()
     req(nrow(d) > 0)
-    zone_w <- (SZ_RIGHT - SZ_LEFT) / 3
-    zone_h <- (SZ_TOP   - SZ_BOT)  / 3
     ds <- d %>%
       filter(!is.na(PlateLocSide), !is.na(PlateLocHeight)) %>%
       mutate(
-        zone_col = cut(PlateLocSide,
-          breaks = c(-Inf, SZ_LEFT + zone_w, SZ_LEFT + 2 * zone_w, Inf),
-          labels = c("Left","Middle","Right")),
-        zone_row = cut(PlateLocHeight,
-          breaks = c(-Inf, SZ_BOT + zone_h, SZ_BOT + 2 * zone_h, Inf),
-          labels = c("Low","Mid","High")),
+        zone  = classify_zone13(PlateLocSide, PlateLocHeight),
         swing = PitchCall %in% c("StrikeSwinging","FoulBallNotFieldable",
                                   "FoulBallFieldable","InPlay")
       ) %>%
-      filter(!is.na(zone_col), !is.na(zone_row)) %>%
-      group_by(zone_col, zone_row) %>%
+      filter(!is.na(zone)) %>%
+      group_by(zone) %>%
       summarise(swing_pct = mean(swing), n = n(), .groups = "drop") %>%
-      tidyr::complete(
-        zone_col = c("Left","Middle","Right"),
-        zone_row = c("Low","Mid","High")
-      )
-    p <- ggplot(ds, aes(x = zone_col, y = zone_row, fill = swing_pct,
+      tidyr::complete(zone = ZONE13_COORDS$zone) %>%
+      right_join(ZONE13_COORDS, by = "zone")
+
+    p <- ggplot(ds, aes(x = x, y = y, fill = swing_pct,
         label = if_else(is.na(swing_pct), "—",
                         scales::percent(swing_pct, accuracy = 1)))) +
-      geom_tile(color = "white", linewidth = 0.8) +
-      geom_text(size = 5, fontface = "bold",
+      geom_tile(width = 0.95, height = 0.95, color = "white", linewidth = 1) +
+      geom_text(fontface = "bold", size = 3.5,
                 color = ifelse(is.na(ds$swing_pct), "#999999", "#0a1628")) +
+      annotate("rect", xmin = -1.5, xmax = 1.5, ymin = -0.5, ymax = 2.5,
+               fill = NA, color = "black", linewidth = 1) +
       scale_fill_gradient2(low = "#457B9D", mid = "#f3f3f3", high = "#E63946",
         midpoint = 0.5, na.value = "#f3f3f3",
         labels = scales::percent_format(), name = "Swing%") +
-      scale_x_discrete(limits = c("Left","Middle","Right")) +
-      scale_y_discrete(limits = c("Low","Mid","High")) +
+      coord_fixed() +
       labs(title = "Swing Rates by Zone",
-           subtitle = "Catcher's-eye view", x = NULL, y = NULL) +
-      theme_seagulls() + theme(panel.grid = element_blank())
-    plotly_clean(ggplotly(p, tooltip = c("x","y","label")))
+           subtitle = "Catcher's-eye view — includes chase zones",
+           x = NULL, y = NULL) +
+      theme_seagulls() + theme(axis.text = element_blank(), panel.grid = element_blank())
+    ggplotly(p, tooltip = "label") %>%
+      layout(
+        yaxis         = list(scaleanchor = "x", scaleratio = 1),
+        paper_bgcolor = "white", plot_bgcolor = "white",
+        font = list(color = "#1A202C")
+      ) %>%
+      config(displayModeBar = FALSE)
   })
 
 

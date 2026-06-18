@@ -44,6 +44,9 @@ PITCH_CATEGORY_MAP <- c(
 
 data$PitchCategory <- PITCH_CATEGORY_MAP[data$TaggedPitchType]
 data$PitchCategory[is.na(data$PitchCategory)] <- "Undefined"
+data$PitchCategory <- factor(data$PitchCategory,
+  levels = c("Fastball", "Breaking Ball", "Offspeed", "Undefined"))
+data$Season <- "Fall 2025"
 
 PITCH_CATEGORY_COLORS <- c(
   Fastball        = "#D22D49",
@@ -158,13 +161,111 @@ field_outline_df <- function(foul_distance = 330, cf_distance = 400) {
   )
 }
 
+# ── 13-Zone Strike Zone ───────────────────────────────────────────────────────
+classify_zone13 <- function(side, height) {
+  zw    <- (SZ_RIGHT - SZ_LEFT) / 3
+  zh    <- (SZ_TOP   - SZ_BOT)  / 3
+  mid_y <- (SZ_BOT + SZ_TOP) / 2
+
+  col <- cut(side,   breaks = c(SZ_LEFT, SZ_LEFT + zw, SZ_LEFT + 2*zw, SZ_RIGHT),
+             labels = c("L","M","R"), include.lowest = TRUE)
+  row <- cut(height, breaks = c(SZ_BOT, SZ_BOT + zh, SZ_BOT + 2*zh, SZ_TOP),
+             labels = c("Low","Mid","High"), include.lowest = TRUE)
+  inner <- !is.na(col) & !is.na(row)
+
+  in_outer_band <- side   >= SZ_LEFT - zw & side   <= SZ_RIGHT + zw &
+                   height >= SZ_BOT  - zh & height <= SZ_TOP   + zh & !inner
+
+  dplyr::case_when(
+    inner & col == "L" & row == "High" ~ "1",
+    inner & col == "M" & row == "High" ~ "2",
+    inner & col == "R" & row == "High" ~ "3",
+    inner & col == "L" & row == "Mid"  ~ "4",
+    inner & col == "M" & row == "Mid"  ~ "5",
+    inner & col == "R" & row == "Mid"  ~ "6",
+    inner & col == "L" & row == "Low"  ~ "7",
+    inner & col == "M" & row == "Low"  ~ "8",
+    inner & col == "R" & row == "Low"  ~ "9",
+    in_outer_band & side <  0 & height >= mid_y ~ "11",
+    in_outer_band & side >= 0 & height >= mid_y ~ "12",
+    in_outer_band & side <  0 & height <  mid_y ~ "13",
+    in_outer_band & side >= 0 & height <  mid_y ~ "14",
+    TRUE ~ NA_character_
+  )
+}
+
+ZONE13_COORDS <- tribble(
+  ~zone,  ~x,    ~y,
+  "1",   -1,    2,
+  "2",    0,    2,
+  "3",    1,    2,
+  "4",   -1,    1,
+  "5",    0,    1,
+  "6",    1,    1,
+  "7",   -1,    0,
+  "8",    0,    0,
+  "9",    1,    0,
+  "11",  -2.1,  1.75,
+  "12",   2.1,  1.75,
+  "13",  -2.1,  0.25,
+  "14",   2.1,  0.25
+)
+
 source("roster.R")
 source("sync_drive.R")
+
+# ── Player photos ─────────────────────────────────────────────────────────────
+roster_photos <- tribble(
+  ~player_name,          ~photo_url,
+  "Bryce Brooks",        "https://collegeseagulls.com/sports/bsb/2026/photos/0001/hs_bryce_brooks.jpg",
+  "Sebastian Ultreras",  "https://collegeseagulls.com/sports/bsb/2026/photos/0001/hs_sebastian_ultreras.jpg",
+  "Declan Mendel",       "https://collegeseagulls.com/sports/bsb/2026/photos/0001/hs_declan_mendel.jpg",
+  "Emilio Feliciano",    "https://collegeseagulls.com/sports/bsb/2026/photos/0001/hs_emilio_feliciano.jpg",
+  "Davis Germann",       "https://collegeseagulls.com/sports/bsb/2026/photos/0001/hs_davis_germann.jpg",
+  "Theodore Tsouras",    "https://collegeseagulls.com/sports/bsb/2026/photos/0001/hs_theodore_tsouras.jpg",
+  "Benjamin Joost",      "https://collegeseagulls.com/sports/bsb/2026/photos/0001/hs_benjamin_joost.jpg",
+  "Finn Whalen",         "https://collegeseagulls.com/sports/bsb/2026/photos/0001/hs_finn_whalen.jpg",
+  "Matthew Potter",      "https://collegeseagulls.com/sports/bsb/2026/photos/0001/hs_matthew_potter.jpg",
+  "Louden Hilliard",     "https://collegeseagulls.com/sports/bsb/2026/photos/0001/hs_louden_hilliard.jpg",
+  "Caid Heflin",         "https://collegeseagulls.com/sports/bsb/2026/photos/0001/hs_caid_heflin.jpg",
+  "Jacob Gilbreath",     "https://collegeseagulls.com/sports/bsb/2026/photos/0001/hs_jacob_gilbreath.jpg",
+  "Joseph Steidel",      "https://collegeseagulls.com/sports/bsb/2026/photos/0001/hs_joseph_steidel.jpg",
+  "Blake Cowans",        "https://collegeseagulls.com/sports/bsb/2026/photos/0001/hs_blake_cowans.jpg",
+  "Jake Brewer",         "https://collegeseagulls.com/sports/bsb/2026/photos/0001/hs_jake_brewer.jpg",
+  "Ethan Lopez",         "https://collegeseagulls.com/sports/bsb/2026/photos/0001/hs_ethan_lopez.jpg",
+  "Caleb Garrison",      "https://collegeseagulls.com/sports/bsb/2026/photos/0001/hs_caleb_garrison.jpg",
+  "Marcus Graham",       "https://collegeseagulls.com/sports/bsb/2026/photos/0001/hs_marcus_graham.jpg",
+  "Connor Wood",         "https://collegeseagulls.com/sports/bsb/2026/photos/0001/hs_connor_wood.jpg",
+  "Taylor Easthope",     "https://collegeseagulls.com/sports/bsb/2026/photos/0001/hs_taylor_easthope.jpg",
+  "Derek Waldvogel",     "https://collegeseagulls.com/sports/bsb/2026/photos/0001/hs_derek_waldvogel.jpg",
+  "Tanner Wall",         "https://collegeseagulls.com/sports/bsb/2026/photos/0001/hs_tanner_wall.jpg",
+  "Armando Hurtado",     "https://collegeseagulls.com/sports/bsb/2026/photos/0001/hs_armando_hurtado.jpg",
+  "Brandon Swanson",     "https://collegeseagulls.com/sports/bsb/2026/photos/0001/hs_brandon_swanson.jpg",
+  "Christian LaMothe",   "https://collegeseagulls.com/sports/bsb/2026/photos/0001/hs_christian_lamothe.jpg",
+  "JB Ferreira",         "https://collegeseagulls.com/sports/bsb/2026/photos/0001/hs_jb_ferreira.jpg",
+  "Branson Derrington",  "https://collegeseagulls.com/sports/bsb/2026/photos/0001/hs_branson_derrington.jpg",
+  "Camren Boyd",         "https://collegeseagulls.com/sports/bsb/2026/photos/0001/hs_camren_boyd.jpg",
+  "Luka Shah",           NA_character_,
+  "Alan Ramirez",        NA_character_
+)
+
+player_photo_tag <- function(player_name, size = "80px") {
+  slug <- tolower(gsub("[^a-z0-9]+", "_", player_name))
+  path <- file.path("www/players", paste0(slug, ".jpg"))
+  if (file.exists(path)) {
+    tags$img(
+      src   = paste0("players/", slug, ".jpg"),
+      style = paste0("width:", size, "; height:", size,
+                     "; border-radius:50%; object-fit:cover;")
+    )
+  } else {
+    tagList()
+  }
+}
 
 # ── Layout helpers (used by server.R renderUI) ─────────────────────────────────
 
 coach_sidebar <- function() {
-  pt <- sort(unique(data$TaggedPitchType[data$TaggedPitchType != "Undefined"]))
   div(
     style = "width:280px; min-width:280px; padding:0; background:#1E2A3A;
              height:100vh; overflow-y:auto; display:flex; flex-direction:column;",
@@ -198,17 +299,25 @@ coach_sidebar <- function() {
         choices = c("All Players", sort(unique(data$Pitcher))),
         options = list(`live-search` = TRUE)
       ),
-      tags$label("Game", class = "control-label"),
-      div(class = "game-chip-row", uiOutput("game_selector")),
-      pickerInput(
-        "pitch_types", "Pitch Types",
-        choices = pt, selected = pt, multiple = TRUE,
-        options = list(`actions-box` = TRUE, `live-search` = TRUE)
-      ),
+      selectInput("season", "Season",
+        choices = c("Fall 2025"), selected = "Fall 2025"),
       radioGroupButtons(
-        "pitch_group_mode", label = "Group Pitches By",
-        choices = c("Pitch Type", "Category"),
-        selected = "Pitch Type", justified = TRUE, size = "sm"
+        "game_window", "Games",
+        choices  = c("Last 5", "Last 10", "Full Season", "Custom"),
+        selected = "Last 5", justified = TRUE, size = "sm"
+      ),
+      conditionalPanel(
+        condition = "input.game_window == 'Custom'",
+        pickerInput("custom_games", "Select Games",
+          choices = NULL, multiple = TRUE,
+          options = list(`actions-box` = TRUE))
+      ),
+      pickerInput(
+        "pitch_types", "Pitch Categories",
+        choices  = c("Fastball", "Breaking Ball", "Offspeed"),
+        selected = c("Fastball", "Breaking Ball", "Offspeed"),
+        multiple = TRUE,
+        options  = list(`actions-box` = TRUE)
       ),
       selectInput("count", "Count",
         choices = c("All", "Pitcher's Count", "Hitter's Count", "2K")
@@ -242,25 +351,20 @@ coach_layout <- function() {
               "Overview",
               uiOutput("coach_pitch_glance"),
               fluidRow(column(12, DTOutput("table_arsenal"))),
-              fluidRow(column(12, plotlyOutput("plot_movement", height = "440px"))),
+              fluidRow(
+                column(6, plotlyOutput("plot_zone13",  height = "440px")),
+                column(6, plotlyOutput("plot_movement", height = "440px"))
+              ),
               fluidRow(column(12, DTOutput("table_pitchers")))
             ),
             tabPanel(
               "Detail",
-              fluidRow(
-                column(6, plotlyOutput("plot_zone",    height = "380px")),
-                column(6, plotlyOutput("plot_arsenal", height = "380px"))
-              ),
-              fluidRow(
-                column(12, plotlyOutput("plot_velo_spin", height = "340px"))
-              ),
-              fluidRow(
-                column(6, plotlyOutput("plot_release",       height = "380px")),
-                column(6, plotlyOutput("plot_outcomes",      height = "380px"))
-              ),
-              fluidRow(
-                column(12, plotlyOutput("plot_count_heatmap", height = "360px"))
-              )
+              fluidRow(column(12, plotlyOutput("plot_density_cards", height = "600px"))),
+              fluidRow(column(6,  plotlyOutput("plot_arsenal",       height = "380px")))
+            ),
+            tabPanel(
+              "Trends",
+              fluidRow(column(12, plotlyOutput("plot_usage_trend", height = "420px")))
             )
           )
         ),
@@ -271,21 +375,13 @@ coach_layout <- function() {
             tabPanel(
               "Overview",
               uiOutput("coach_hit_glance"),
-              fluidRow(
-                column(7, plotlyOutput("plot_spray",   height = "440px")),
-                column(5, DTOutput("table_batters"))
-              )
+              fluidRow(column(12, plotlyOutput("plot_spray", height = "440px"))),
+              fluidRow(column(12, DTOutput("table_batters")))
             ),
             tabPanel(
               "Detail",
-              fluidRow(
-                column(12, plotlyOutput("plot_ev_la", height = "420px"))
-              ),
-              fluidRow(
-                column(4, plotlyOutput("plot_swing_zones", height = "360px")),
-                column(4, plotlyOutput("plot_hit_types",   height = "360px")),
-                column(4, plotlyOutput("plot_pitch_vuln",  height = "360px"))
-              )
+              fluidRow(column(12, plotlyOutput("plot_swing_zones",    height = "480px"))),
+              fluidRow(column(12, plotlyOutput("plot_quality_contact", height = "420px")))
             )
           )
         )
