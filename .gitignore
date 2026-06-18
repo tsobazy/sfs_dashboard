@@ -13,3 +13,12 @@ data/game_csvs/
 
 # Local environment (contains Drive folder ID)
 .Renviron
+
+# macOS
+.DS_Store
+
+# Dev reference images (not part of the app)
+reference-*.png
+
+# Claude Superpowers tooling artifacts
+docs/superpowers/

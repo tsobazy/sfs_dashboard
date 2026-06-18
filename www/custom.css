@@ -1,0 +1,74 @@
+/* Abbreviate selected pitch category display in picker button */
+.bootstrap-select.pitch-cats-picker .filter-option-inner-inner {
+  font-size: 11px;
+  letter-spacing: -0.2px;
+}
+
+/* Hide shinymanager's default logo — keep only the custom one in tags_top */
+.shinymanager-login img:not(.custom-logo) {
+  display: none;
+}
+
+
+/* Prevent picker dropdowns from overflowing sidebar bounds */
+.bootstrap-select .dropdown-menu {
+  min-width: 100% !important;
+  max-width: 100% !important;
+  width: 100% !important;
+  left: 0 !important;
+  right: auto !important;
+  box-sizing: border-box;
+}
+
+/* Remove space before colon in login labels */
+.shinymanager-login label[for="user_id"]::after,
+.shinymanager-login label[for="user_pwd"]::after {
+  content: none;
+}
+.shinymanager-login label[for="user_id"] {
+  font-size: 0px;
+}
+.shinymanager-login label[for="user_id"]::before {
+  content: "Username:";
+  font-size: 14px;
+  font-weight: 600;
+}
+.shinymanager-login label[for="user_pwd"] {
+  font-size: 0px;
+}
+.shinymanager-login label[for="user_pwd"]::before {
+  content: "Password:";
+  font-size: 14px;
+  font-weight: 600;
+}
+
+/* Remove Bootstrap's default column padding on the player sidebar */
+.player-sidebar-col {
+  padding-left: 0 !important;
+  padding-right: 0 !important;
+}
+
+/* Hide Shiny/bslib floating full-screen and action buttons */
+.shiny-full-screen-enter,
+.bslib-full-screen-enter,
+.float-action-button,
+[class*="float-action"],
+.fab,
+.bslib-sidebar-toggle,
+[data-bs-toggle="bslib-full-screen"],
+a[href="#"][style*="position: fixed"],
+button[style*="position: fixed"] {
+  display: none !important;
+}
+
+/* Plate discipline table — align headers to match cells */
+#table_plate_discipline thead th {
+  text-align: center !important;
+}
+#table_plate_discipline thead th:first-child {
+  text-align: left !important;
+}
+#table_plate_discipline thead th:first-child,
+#table_plate_discipline tbody td:first-child {
+  padding-left: 8px !important;
+}

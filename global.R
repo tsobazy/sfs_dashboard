@@ -8,6 +8,15 @@ library(DT)
 library(shinymanager)
 library(scales)
 
+# Customise shinymanager login screen labels
+shinymanager::set_labels(
+  "en",
+  "Please authenticate" = "Please login",
+  "Username:"           = "Username",
+  "Password:"           = "Password",
+  "Login"               = "Sign In"
+)
+
 # ── Data ──────────────────────────────────────────────────────────────────────
 data <- read_csv("all_fall_25.csv", show_col_types = FALSE)
 
@@ -194,21 +203,23 @@ classify_zone13 <- function(side, height) {
   )
 }
 
+# Inner grid: x[-1.5,1.5], y[-1.5,1.5], 1×1 cells centred at origin.
+# Outer zones: x/y are label anchor positions near each corner quadrant.
 ZONE13_COORDS <- tribble(
-  ~zone,  ~x,    ~y,
-  "1",   -1,    2,
-  "2",    0,    2,
-  "3",    1,    2,
-  "4",   -1,    1,
-  "5",    0,    1,
-  "6",    1,    1,
-  "7",   -1,    0,
-  "8",    0,    0,
-  "9",    1,    0,
-  "11",  -2.1,  1.75,
-  "12",   2.1,  1.75,
-  "13",  -2.1,  0.25,
-  "14",   2.1,  0.25
+  ~zone,  ~x,   ~y,
+  "1",   -1,    1,
+  "2",    0,    1,
+  "3",    1,    1,
+  "4",   -1,    0,
+  "5",    0,    0,
+  "6",    1,    0,
+  "7",   -1,   -1,
+  "8",    0,   -1,
+  "9",    1,   -1,
+  "11",  -2,    2,
+  "12",   2,    2,
+  "13",  -2,   -2,
+  "14",   2,   -2
 )
 
 source("roster.R")
@@ -250,16 +261,26 @@ roster_photos <- tribble(
 )
 
 player_photo_tag <- function(player_name, size = "80px") {
-  slug <- tolower(gsub("[^a-z0-9]+", "_", player_name))
+  if (is.null(player_name) || is.na(player_name) || nchar(trimws(player_name)) == 0)
+    return(tagList())
+  slug <- gsub("[^a-z0-9]+", "_", tolower(trimws(player_name)))
   path <- file.path("www/players", paste0(slug, ".jpg"))
   if (file.exists(path)) {
     tags$img(
       src   = paste0("players/", slug, ".jpg"),
       style = paste0("width:", size, "; height:", size,
-                     "; border-radius:50%; object-fit:cover;")
+                     "; border-radius:50%; object-fit:cover; display:block; flex-shrink:0;")
     )
   } else {
-    tagList()
+    initials <- paste(substr(strsplit(trimws(player_name), "\\s+")[[1]], 1, 1), collapse = "")
+    tags$div(
+      initials,
+      style = paste0(
+        "width:", size, "; height:", size, "; border-radius:50%;",
+        "background:#2A9D8F; color:white; display:flex; align-items:center;",
+        "justify-content:center; font-weight:700; font-size:26px; flex-shrink:0;"
+      )
+    )
   }
 }
 
@@ -267,33 +288,44 @@ player_photo_tag <- function(player_name, size = "80px") {
 
 coach_sidebar <- function() {
   div(
-    style = "width:280px; min-width:280px; padding:0; background:#1E2A3A;
+    style = "width:280px; min-width:280px; background:#0a1628;
              height:100vh; overflow-y:auto; display:flex; flex-direction:column;",
 
-    # Navy header — logo + identity
+    # ── Header card ────────────────────────────────────────────────
     div(
-      style = "padding:16px 16px 12px 16px;",
-      tags$img(src = "seagulls_logo.png", height = "44px",
-               style = "display:block; margin-bottom:8px;"),
-      tags$div("SAN FRANCISCO SEAGULLS",
-               style = "color:#ffffff; font-size:11px; font-weight:700;
-                        letter-spacing:1px; margin-bottom:10px;"),
-      tags$small(textOutput("coach_header", inline = TRUE),
-                 style = "color:#cfe0f0; display:block; margin-bottom:6px;"),
-      actionButton("logout", "Log Out", class = "btn-sm btn-one-light")
+      style = "margin:10px; border-radius:12px; overflow:hidden;
+               background:#015294; border:1px solid rgba(255,255,255,0.12);
+               padding:20px 16px 16px 16px;",
+
+      # Row 1 — Logo, centered
+      div(style = "text-align:center; margin-bottom:10px;",
+        tags$img(src = "seagulls_logo.png", height = "60px")
+      ),
+
+      # Row 2 — Team name, centered
+      div(style = "text-align:center; margin-bottom:14px;",
+        tags$span("SAN FRANCISCO SEAGULLS",
+                  style = "color:#ffffff; font-size:12px; font-weight:700;
+                           letter-spacing:1.5px;")
+      ),
+
+      # Row 3 — Name/role left, Log Out right
+      div(style = "display:flex; align-items:center; justify-content:space-between;",
+        div(textOutput("coach_header", inline = TRUE),
+            style = "color:#cfe0f0; font-size:13px;"),
+        actionButton("logout", "Log Out",
+                     style = "font-size:11px; padding:4px 10px; border-radius:20px;
+                              background:rgba(255,255,255,0.08);
+                              color:#ffffff; border:1px solid rgba(255,255,255,0.3);
+                              cursor:pointer;")
+      )
     ),
 
-    # White card — all filters
+    # ── White filter card ───────────────────────────────────────────
     div(
-      style = "background:#ffffff; margin:0 12px 12px 12px; padding:14px;
+      style = "background:#ffffff; margin:0 10px 10px 10px; padding:14px;
                border-radius:10px; flex:1; overflow-y:auto;",
 
-      radioGroupButtons(
-        "view_mode", label = "View",
-        choices = c("Pitching", "Hitting"),
-        selected = "Pitching", justified = TRUE, size = "sm"
-      ),
-      hr(),
       pickerInput(
         "player", "Player",
         choices = c("All Players", sort(unique(data$Pitcher))),
@@ -302,35 +334,50 @@ coach_sidebar <- function() {
       selectInput("season", "Season",
         choices = c("Fall 2025"), selected = "Fall 2025"),
       radioGroupButtons(
-        "game_window", "Games",
+        "game_window", label = "Games",
         choices  = c("Last 5", "Last 10", "Full Season", "Custom"),
-        selected = "Last 5", justified = TRUE, size = "sm"
+        selected = "Full Season", justified = TRUE, size = "sm"
       ),
       conditionalPanel(
         condition = "input.game_window == 'Custom'",
-        pickerInput("custom_games", "Select Games",
-          choices = NULL, multiple = TRUE,
-          options = list(`actions-box` = TRUE))
+        pickerInput("custom_games", label = NULL,
+          choices  = NULL, multiple = TRUE,
+          options  = list(`actions-box` = TRUE, title = "Select games"))
       ),
+      hr(),
       pickerInput(
-        "pitch_types", "Pitch Categories",
+        "pitch_cats", "Pitch Categories",
         choices  = c("Fastball", "Breaking Ball", "Offspeed"),
         selected = c("Fastball", "Breaking Ball", "Offspeed"),
         multiple = TRUE,
-        options  = list(`actions-box` = TRUE)
+        options  = list(`actions-box` = TRUE,
+                        `selected-text-format` = "values",
+                        `none-selected-text`   = "None")
       ),
+      tags$script(HTML("
+        $(document).ready(function() {
+          function abbrevPicker() {
+            $('.bootstrap-select button .filter-option-inner-inner').each(function() {
+              var t = $(this).text();
+              t = t.replace(/Fastball/g,'Fast')
+                   .replace(/Breaking Ball/g,'Break')
+                   .replace(/Offspeed/g,'Off');
+              $(this).text(t);
+            });
+          }
+          abbrevPicker();
+          $(document).on('changed.bs.select', function() {
+            setTimeout(abbrevPicker, 10);
+          });
+        });
+      ")),
       selectInput("count", "Count",
-        choices = c("All", "Pitcher's Count", "Hitter's Count", "2K")
-      ),
+        choices  = c("All", "Pitcher's Count", "Hitter's Count", "2K"),
+        selected = "All"),
       sliderInput("innings", "Innings", min = 1, max = 9,
                   value = c(1, 9), step = 1),
       hr(),
-      div(
-        style = "margin-top:4px;",
-        actionButton("sync_data", "⟳ Sync Data from Drive",
-                     class = "btn-sm btn-outline-primary w-100"),
-        uiOutput("sync_status")
-      )
+      uiOutput("insights")
     )
   )
 }
@@ -350,6 +397,8 @@ coach_layout <- function() {
             tabPanel(
               "Overview",
               uiOutput("coach_pitch_glance"),
+              tags$h5("Pitch Arsenal Summary",
+                      style = "font-weight:700; color:#0a1628; font-size:15px; margin:0 0 8px 4px; letter-spacing:0.2px;"),
               fluidRow(column(12, DTOutput("table_arsenal"))),
               fluidRow(
                 column(6, plotlyOutput("plot_zone13",  height = "440px")),
@@ -359,8 +408,63 @@ coach_layout <- function() {
             ),
             tabPanel(
               "Detail",
-              fluidRow(column(12, plotlyOutput("plot_density_cards", height = "600px"))),
-              fluidRow(column(6,  plotlyOutput("plot_arsenal",       height = "380px")))
+              fluidRow(
+                column(1),
+                column(3, tags$h5("Fastball",
+                  style = "font-weight:700; color:#E63946; text-align:center;
+                           font-size:15px; margin:12px 0 4px 0;")),
+                column(3, tags$h5("Breaking Ball",
+                  style = "font-weight:700; color:#457B9D; text-align:center;
+                           font-size:15px; margin:12px 0 4px 0;")),
+                column(3, tags$h5("Offspeed",
+                  style = "font-weight:700; color:#2A9D8F; text-align:center;
+                           font-size:15px; margin:12px 0 4px 0;"))
+              ),
+              fluidRow(
+                column(1, tags$div("Overall",
+                  style = "writing-mode:vertical-rl; transform:rotate(180deg);
+                           font-weight:600; color:#555; font-size:12px;
+                           text-align:center; margin-top:60px;")),
+                column(3, plotlyOutput("density_fb_overall",  height = "260px")),
+                column(3, plotlyOutput("density_bb_overall",  height = "260px")),
+                column(3, plotlyOutput("density_os_overall",  height = "260px"))
+              ),
+              fluidRow(
+                column(1, tags$div("First Pitch",
+                  style = "writing-mode:vertical-rl; transform:rotate(180deg);
+                           font-weight:600; color:#555; font-size:12px;
+                           text-align:center; margin-top:60px;")),
+                column(3, plotlyOutput("density_fb_first",    height = "260px")),
+                column(3, plotlyOutput("density_bb_first",    height = "260px")),
+                column(3, plotlyOutput("density_os_first",    height = "260px"))
+              ),
+              fluidRow(
+                column(1, tags$div("Hitter's Count",
+                  style = "writing-mode:vertical-rl; transform:rotate(180deg);
+                           font-weight:600; color:#555; font-size:12px;
+                           text-align:center; margin-top:60px;")),
+                column(3, plotlyOutput("density_fb_hitter",   height = "260px")),
+                column(3, plotlyOutput("density_bb_hitter",   height = "260px")),
+                column(3, plotlyOutput("density_os_hitter",   height = "260px"))
+              ),
+              fluidRow(
+                column(1, tags$div("Pitcher's Count",
+                  style = "writing-mode:vertical-rl; transform:rotate(180deg);
+                           font-weight:600; color:#555; font-size:12px;
+                           text-align:center; margin-top:60px;")),
+                column(3, plotlyOutput("density_fb_pitcher",  height = "260px")),
+                column(3, plotlyOutput("density_bb_pitcher",  height = "260px")),
+                column(3, plotlyOutput("density_os_pitcher",  height = "260px"))
+              ),
+              fluidRow(
+                column(1, tags$div("2K",
+                  style = "writing-mode:vertical-rl; transform:rotate(180deg);
+                           font-weight:600; color:#555; font-size:12px;
+                           text-align:center; margin-top:60px;")),
+                column(3, plotlyOutput("density_fb_2k",       height = "260px")),
+                column(3, plotlyOutput("density_bb_2k",       height = "260px")),
+                column(3, plotlyOutput("density_os_2k",       height = "260px"))
+              )
             ),
             tabPanel(
               "Trends",
@@ -380,7 +484,19 @@ coach_layout <- function() {
             ),
             tabPanel(
               "Detail",
-              fluidRow(column(12, plotlyOutput("plot_swing_zones",    height = "480px"))),
+              fluidRow(
+                column(12,
+                  tags$h5("Plate Discipline by Situation",
+                          style = "font-weight:700; color:#0a1628;
+                                   font-size:15px; margin:16px 0 8px 4px;"),
+                  DT::DTOutput("table_plate_discipline")
+                )
+              ),
+              fluidRow(column(12,
+                div(style = "display:flex; justify-content:center;",
+                  plotlyOutput("plot_swing_zones", height = "520px", width = "520px")
+                )
+              )),
               fluidRow(column(12, plotlyOutput("plot_quality_contact", height = "420px")))
             )
           )
@@ -392,7 +508,39 @@ coach_layout <- function() {
 
 player_shell <- function() {
   div(
-    style = "max-width:900px; margin:0 auto; padding:16px;",
-    uiOutput("player_ui")
+    style = "display:flex; height:100vh; margin:0; padding:0;",
+    # ── Left sidebar — navy, same structure as coach ──────────────────────────
+    div(
+      style = "width:260px; min-width:260px; padding:0; background:#1E2A3A;
+               height:100vh; overflow-y:auto; display:flex; flex-direction:column;",
+      # Team branding
+      div(
+        style = "padding:16px 16px 10px 16px;",
+        tags$img(src = "seagulls_logo.png", height = "44px",
+                 style = "display:block; margin-bottom:8px;"),
+        tags$div("SAN FRANCISCO SEAGULLS",
+                 style = "color:#ffffff; font-size:11px; font-weight:700;
+                          letter-spacing:1px; margin-bottom:2px;"),
+        tags$div("Player Portal",
+                 style = "color:#8BA4B8; font-size:11px;")
+      ),
+      tags$hr(style = "border-color:#2e3f52; margin:8px 0 0;"),
+      # Player identity block (photo, name, jersey, position) — server-rendered
+      uiOutput("player_sidebar_identity"),
+      tags$hr(style = "border-color:#2e3f52; margin:0;"),
+      # Game navigator — server-rendered
+      uiOutput("player_sidebar_nav"),
+      # Push logout to bottom
+      div(style = "flex:1;"),
+      div(
+        style = "padding:16px;",
+        actionButton("logout", "Log Out", class = "btn-sm btn-one-light w-100")
+      )
+    ),
+    # ── Main content area ─────────────────────────────────────────────────────
+    div(
+      style = "flex:1; overflow-y:auto; padding:24px; background:#F8F9FC;",
+      uiOutput("player_ui")
+    )
   )
 }

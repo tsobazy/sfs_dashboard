@@ -6,22 +6,16 @@ library(plotly)
 library(DT)
 library(scales)
 
+options(shiny.reactlog = FALSE)
+
 source("roster.R")
 
 # Stat tile helper for player scorecard
 stat_tile <- function(label, value_str, css_class = "tile-neutral", trend = NULL,
                       tooltip_text = NULL) {
-  label_node <- if (!is.null(tooltip_text)) {
-    tagList(label, " ",
-            tags$abbr(title = tooltip_text,
-                      style = "cursor:help; color:#aaa; font-size:10px; text-decoration:none;",
-                      "?"))
-  } else {
-    label
-  }
   div(
     class = "value-tile",
-    div(class = "tile-label", label_node),
+    div(class = "tile-label", label),
     div(class = paste("tile-value", css_class), value_str),
     if (!is.null(trend)) trend
   )
@@ -38,6 +32,33 @@ tile_class <- function(val, hi_thr, lo_thr, hi_good = TRUE) {
     else if (val >= lo_thr) "tile-amber"
     else "tile-neutral"
   }
+}
+
+# Badge appended to a tile label: ★ = exceeds threshold, "focus" = below floor
+metric_badge <- function(val, hi_thr, lo_thr, hi_good = TRUE) {
+  if (is.na(val)) return(NULL)
+  good <- if (hi_good) val >= hi_thr else val <= hi_thr
+  bad  <- if (hi_good) val <= lo_thr else val >= lo_thr
+  if (good) tags$span("★", style = "color:#2A9D8F; margin-left:4px; font-size:10px;")
+  else if (bad) tags$span("focus", style = "color:#F4A261; margin-left:3px; font-size:9px; font-weight:700; letter-spacing:.3px;")
+  else NULL
+}
+
+format_pitch_result <- function(pitch_call, play_result) {
+  dplyr::case_when(
+    pitch_call == "StrikeSwinging"                                  ~ "Swing & Miss",
+    pitch_call == "StrikeCalled"                                    ~ "Called Strike",
+    pitch_call %in% c("FoulBallNotFieldable","FoulBallFieldable")   ~ "Foul",
+    pitch_call == "Ball"                                            ~ "Ball",
+    pitch_call == "HitByPitch"                                      ~ "HBP",
+    pitch_call == "InPlay" & play_result == "Single"                ~ "1B",
+    pitch_call == "InPlay" & play_result == "Double"                ~ "2B",
+    pitch_call == "InPlay" & play_result == "Triple"                ~ "3B",
+    pitch_call == "InPlay" & play_result == "HomeRun"               ~ "HR",
+    pitch_call == "InPlay" & play_result == "Out"                   ~ "Out",
+    pitch_call == "InPlay"                                          ~ "In Play",
+    TRUE                                                            ~ pitch_call
+  )
 }
 
 server <- function(input, output, session) {
@@ -104,7 +125,7 @@ server <- function(input, output, session) {
 
   # ── Coach header ──────────────────────────────────────────────────────────
   output$coach_header <- renderText({
-    paste0("Logged in as: ", user_display_name(), " (Coach)")
+    paste0(user_display_name(), " (Coach)")
   })
 
   observeEvent(input$logout, {
@@ -117,16 +138,16 @@ server <- function(input, output, session) {
     if (user_role() == "coach") {
       coach_layout()
     } else {
-      player_shell()
+      div(style = "margin:0; padding:0;", uiOutput("player_ui"))
     }
   })
 
   # pitch_types choices are static categories — no dynamic init needed
 
-  # Updates player dropdown whenever view mode changes
-  observeEvent(input$view_mode, {
+  # Updates player dropdown whenever main tab changes
+  observeEvent(input$main_tabs, {
     req(user_role() == "coach")
-    players <- if (input$view_mode == "Pitching") {
+    players <- if (input$main_tabs == "Pitching") {
       sort(unique(app_data()$Pitcher))
     } else {
       sort(unique(app_data()$Batter))
@@ -140,13 +161,13 @@ server <- function(input, output, session) {
   # ── Master filtered reactive (coach view) ─────────────────────────────────
   fdata <- reactive({
     req(user_role() == "coach")
-    req(input$pitch_types, input$count, input$innings)
+    req(input$pitch_cats, input$count, input$innings)
 
     game_dates <- selected_games()
     d <- app_data() %>%
       filter(
         Date %in% game_dates,
-        PitchCategory %in% input$pitch_types,
+        PitchCategory %in% input$pitch_cats,
         PitchCategory != "Undefined",
         Inning >= input$innings[1],
         Inning <= input$innings[2]
@@ -161,12 +182,42 @@ server <- function(input, output, session) {
     )
 
     if (!is.null(input$player) && input$player != "All Players") {
-      if (input$view_mode == "Pitching") {
+      if (is.null(input$main_tabs) || input$main_tabs == "Pitching") {
         d <- d %>% filter(Pitcher == input$player)
       } else {
         d <- d %>% filter(Batter == input$player)
       }
     }
+    d
+  })
+
+  # ── Spray click filter (coach hitting tab) ────────────────────────────────
+  spray_click_filter <- reactiveVal(NULL)
+
+  observeEvent(list(input$player, input$game_window, input$main_tabs), {
+    spray_click_filter(NULL)
+  })
+
+  observeEvent(event_data("plotly_click", source = "spray_chart"), {
+    click <- event_data("plotly_click", source = "spray_chart")
+    if (!is.null(click$customdata)) {
+      clicked <- click$customdata[[1]]
+      if (identical(spray_click_filter(), clicked)) {
+        spray_click_filter(NULL)
+      } else {
+        spray_click_filter(clicked)
+      }
+    }
+  })
+
+  observeEvent(event_data("plotly_doubleclick", source = "spray_chart"), {
+    spray_click_filter(NULL)
+  })
+
+  fdata_hitting <- reactive({
+    d <- fdata()
+    if (!is.null(spray_click_filter()))
+      d <- d %>% filter(PlayResult == spray_click_filter())
     d
   })
 
@@ -181,131 +232,103 @@ server <- function(input, output, session) {
       filter(.data[[col]] == name, TaggedPitchType != "Undefined")
   })
 
-  # ── Per-Pitch-Type Density Cards ──────────────────────────────────────────
-  output$plot_density_cards <- renderPlotly({
-    req(nrow(fdata()) > 0)
-    d_all <- fdata() %>%
-      filter(!is.na(PlateLocSide), !is.na(PlateLocHeight),
-             TaggedPitchType != "Undefined")
+  # ── Density grid helper — one cell per pitch category × count situation ──────
+  render_density_plot <- function(data_reactive, category, count_filter = NULL) {
+    renderPlotly({
+      d <- data_reactive()
+      req(nrow(d) > 0)
 
-    if (nrow(d_all) == 0) {
-      return(plot_ly() %>%
-        add_annotations(text = "No pitch location data available.",
-                        x = 0.5, y = 0.5, xref = "paper", yref = "paper",
-                        showarrow = FALSE, font = list(size = 13, color = "#64748B")) %>%
-        layout(paper_bgcolor = "white", xaxis = list(visible = FALSE),
-               yaxis = list(visible = FALSE)) %>%
-        config(displayModeBar = FALSE))
-    }
+      d <- d %>%
+        filter(PitchCategory == category,
+               !is.na(PlateLocSide), !is.na(PlateLocHeight))
 
-    total_n    <- nrow(d_all)
-    types_keep <- d_all %>%
-      count(TaggedPitchType) %>%
-      filter(n >= 15) %>%
-      arrange(match(TaggedPitchType, names(PITCH_COLORS))) %>%
-      pull(TaggedPitchType)
+      if (!is.null(count_filter)) {
+        d <- switch(count_filter,
+          "first"   = d %>% filter(Balls == 0, Strikes == 0),
+          "hitter"  = d %>% filter(Count %in% HITTER_COUNTS),
+          "pitcher" = d %>% filter(Count %in% PITCHER_COUNTS),
+          "2k"      = d %>% filter(Count %in% TWO_K_COUNTS),
+          d
+        )
+      }
 
-    if (length(types_keep) == 0) {
-      return(plot_ly() %>%
-        add_annotations(text = "No pitch types with 15+ pitches in this sample.",
-                        x = 0.5, y = 0.5, xref = "paper", yref = "paper",
-                        showarrow = FALSE, font = list(size = 13, color = "#64748B")) %>%
-        layout(paper_bgcolor = "white", xaxis = list(visible = FALSE),
-               yaxis = list(visible = FALSE)) %>%
-        config(displayModeBar = FALSE))
-    }
+      if (nrow(d) < 10) return(plotly_empty())
 
-    hp_x <- c(SZ_LEFT, SZ_RIGHT, SZ_RIGHT, 0, SZ_LEFT, SZ_LEFT)
-    hp_y <- c(0, 0, -0.25, -0.5, -0.25, 0)
+      home_plate <- data.frame(
+        x = c(-0.83,  0.83,  0.83,  0.00, -0.83),
+        y = c( 0.00,  0.00, -0.25, -0.50, -0.25)
+      )
 
-    make_card <- function(pt) {
-      d     <- d_all %>% filter(TaggedPitchType == pt)
-      n_pt  <- nrow(d)
-      pct_pt <- round(n_pt / total_n * 100)
+      p <- ggplot(d, aes(x = PlateLocSide, y = PlateLocHeight)) +
+        stat_density_2d(
+          aes(fill = after_stat(level)),
+          geom    = "polygon",
+          contour = TRUE,
+          bins    = 8,
+          alpha   = 0.85
+        ) +
+        scale_fill_gradient(low = "#aec9e8", high = "#C0392B", guide = "none") +
+        geom_polygon(data = home_plate, aes(x = x, y = y),
+                     inherit.aes = FALSE,
+                     fill = "#cccccc", color = "#888888") +
+        annotate("rect",
+                 xmin = SZ_LEFT, xmax = SZ_RIGHT,
+                 ymin = SZ_BOT,  ymax = SZ_TOP,
+                 fill = NA, color = "#333333",
+                 linetype = "dashed", linewidth = 0.7) +
+        geom_hline(yintercept = (SZ_BOT + SZ_TOP) / 2,
+                   color = "gray70", linetype = "dashed", linewidth = 0.4) +
+        coord_fixed(ratio = 1,
+                    xlim  = c(-2.5, 2.5),
+                    ylim  = c(-0.6, 5.0)) +
+        theme_void() +
+        theme(
+          plot.background  = element_rect(fill = "#eef3f8", color = NA),
+          panel.background = element_rect(fill = "#eef3f8", color = NA)
+        )
 
-      plot_ly() %>%
-        add_trace(
-          x         = d$PlateLocSide,
-          y         = d$PlateLocHeight,
-          type      = "histogram2dcontour",
-          colorscale = list(c(0, "#EFF6FF"), c(0.4, "#3B82F6"), c(1, "#DC2626")),
-          contours  = list(coloring = "fill", showlabels = FALSE),
-          ncontours = 10,
-          line      = list(width = 0),
-          showscale = FALSE,
-          hoverinfo = "none"
-        ) %>%
-        add_shape(
-          type = "rect",
-          x0 = SZ_LEFT, x1 = SZ_RIGHT, y0 = SZ_BOT, y1 = SZ_TOP,
-          line = list(color = "#555555", dash = "dash", width = 1.5),
-          fillcolor = "rgba(0,0,0,0)"
-        ) %>%
-        add_trace(
-          x = hp_x, y = hp_y,
-          type = "scatter", mode = "lines",
-          fill = "toself", fillcolor = "rgba(210,210,210,0.8)",
-          line = list(color = "#999999", width = 1),
-          showlegend = FALSE, hoverinfo = "none"
-        ) %>%
+      ggplotly(p, tooltip = character(0)) %>%
         layout(
-          title = list(
-            text   = paste0("<b>", pt, "</b><br>",
-                            "<sup>", n_pt, " pitches (", pct_pt, "%)</sup>"),
-            font   = list(size = 12, color = "#1A202C"),
-            x      = 0.5
-          ),
-          xaxis = list(range = c(-2.5, 2.5), visible = FALSE,
-                       scaleanchor = "y", scaleratio = 1, fixedrange = TRUE),
-          yaxis = list(range = c(-0.7, 5.0), visible = FALSE, fixedrange = TRUE),
-          paper_bgcolor = "white", plot_bgcolor = "white",
-          margin = list(t = 55, b = 10, l = 10, r = 10),
-          showlegend = FALSE
+          yaxis = list(scaleanchor = "x", scaleratio = 1,
+                       range = c(-0.6, 5.0), visible = FALSE),
+          xaxis = list(range = c(-2.5, 2.5), visible = FALSE),
+          annotations = list(list(
+            text      = paste0(nrow(d), " pitches"),
+            x = 0.5, y = 1.02,
+            xref = "paper", yref = "paper",
+            xanchor = "center", yanchor = "bottom",
+            showarrow = FALSE,
+            font = list(size = 10, color = "#555555")
+          )),
+          margin        = list(t = 20, b = 5, l = 5, r = 5),
+          paper_bgcolor = "#eef3f8",
+          plot_bgcolor  = "#eef3f8"
         ) %>%
         config(displayModeBar = FALSE)
-    }
+    })
+  }
 
-    plots  <- lapply(types_keep, make_card)
-    n_cols <- min(3L, length(plots))
-    n_rows <- ceiling(length(plots) / n_cols)
+  # Overall
+  output$density_fb_overall  <- render_density_plot(fdata, "Fastball",      NULL)
+  output$density_bb_overall  <- render_density_plot(fdata, "Breaking Ball", NULL)
+  output$density_os_overall  <- render_density_plot(fdata, "Offspeed",      NULL)
+  # First Pitch
+  output$density_fb_first    <- render_density_plot(fdata, "Fastball",      "first")
+  output$density_bb_first    <- render_density_plot(fdata, "Breaking Ball", "first")
+  output$density_os_first    <- render_density_plot(fdata, "Offspeed",      "first")
+  # Hitter's Count
+  output$density_fb_hitter   <- render_density_plot(fdata, "Fastball",      "hitter")
+  output$density_bb_hitter   <- render_density_plot(fdata, "Breaking Ball", "hitter")
+  output$density_os_hitter   <- render_density_plot(fdata, "Offspeed",      "hitter")
+  # Pitcher's Count
+  output$density_fb_pitcher  <- render_density_plot(fdata, "Fastball",      "pitcher")
+  output$density_bb_pitcher  <- render_density_plot(fdata, "Breaking Ball", "pitcher")
+  output$density_os_pitcher  <- render_density_plot(fdata, "Offspeed",      "pitcher")
+  # Two Strikes
+  output$density_fb_2k       <- render_density_plot(fdata, "Fastball",      "2k")
+  output$density_bb_2k       <- render_density_plot(fdata, "Breaking Ball", "2k")
+  output$density_os_2k       <- render_density_plot(fdata, "Offspeed",      "2k")
 
-    subplot(plots, nrows = n_rows, shareX = FALSE, shareY = FALSE,
-            margin = 0.05, titleX = FALSE, titleY = FALSE) %>%
-      layout(paper_bgcolor = "white") %>%
-      config(displayModeBar = FALSE)
-  })
-
-  # ── Chart 2: Pitch Arsenal Donut ──────────────────────────────────────────
-  output$plot_arsenal <- renderPlotly({
-    req(nrow(fdata()) > 0)
-    d <- fdata() %>%
-      group_by(PitchCategory) %>%
-      summarise(
-        n        = n(),
-        avg_spd  = round(mean(RelSpeed,  na.rm = TRUE), 1),
-        avg_spin = round(mean(SpinRate,  na.rm = TRUE), 0),
-        .groups  = "drop"
-      ) %>%
-      mutate(pct = n / sum(n))
-
-    plot_ly(d,
-      labels = ~PitchCategory, values = ~n,
-      type   = "pie", hole = 0.5,
-      marker = list(colors = unname(PITCH_CATEGORY_COLORS[d$PitchCategory])),
-      text   = ~paste0(PitchCategory, "<br>", n, " pitches (",
-                       scales::percent(pct, accuracy = 1), ")<br>",
-                       avg_spd, " mph | ", avg_spin, " rpm"),
-      hoverinfo = "text",
-      textinfo  = "label+percent"
-    ) %>%
-      layout(
-        title      = list(text = "Pitch Arsenal", font = list(color = "#0a1628")),
-        showlegend = FALSE,
-        paper_bgcolor = "white", plot_bgcolor = "white",
-        font = list(color = "#0a1628")
-      ) %>%
-      config(displayModeBar = FALSE)
-  })
 
   # ── Arsenal overview table — coaches see this first ───────────────────────
   output$table_arsenal <- DT::renderDT({
@@ -320,6 +343,7 @@ server <- function(input, output, session) {
         `Avg Spin` = round(mean(SpinRate,           na.rm = TRUE), 0),
         `Avg IVB`  = round(mean(InducedVertBreak,   na.rm = TRUE), 1),
         `Avg HB`   = round(mean(HorzBreak,          na.rm = TRUE), 1),
+        `Whiff%`   = whiff_pct(PitchCall),
         .groups    = "drop"
       ) %>%
       arrange(desc(as.numeric(sub("%", "", `Usage%`))))
@@ -341,54 +365,156 @@ server <- function(input, output, session) {
     ) %>%
       DT::formatRound(c("Avg Velo", "Max Velo", "Avg IVB", "Avg HB"), digits = 1) %>%
       DT::formatRound("Avg Spin", digits = 0, mark = ",") %>%
+      DT::formatPercentage("Whiff%", digits = 1) %>%
       DT::formatStyle(columns = names(d), textAlign = "right")
   })
 
   # ── Zone Profile (13-zone) ────────────────────────────────────────────────
   output$plot_zone13 <- renderPlotly({
     req(nrow(fdata()) > 0)
-    d <- fdata() %>%
-      mutate(zone = classify_zone13(PlateLocSide, PlateLocHeight)) %>%
+
+    if (is.null(input$player) || input$player == "All Players") {
+      return(
+        plot_ly() %>%
+          add_annotations(
+            text      = "Select a pitcher to see their zone tendencies",
+            x = 0.5, y = 0.5, xref = "paper", yref = "paper",
+            showarrow = FALSE, font = list(size = 13, color = "#64748B")
+          ) %>%
+          layout(paper_bgcolor = "white", plot_bgcolor = "white",
+                 xaxis = list(visible = FALSE), yaxis = list(visible = FALSE)) %>%
+          config(displayModeBar = FALSE)
+      )
+    }
+
+    # --- Classify pitches into zones 1-9 (inner) and 11-14 (outer) ---
+    zw <- (SZ_RIGHT - SZ_LEFT) / 3
+    zh <- (SZ_TOP   - SZ_BOT)  / 3
+
+    d_raw <- fdata() %>%
+      filter(!is.na(PlateLocSide), !is.na(PlateLocHeight)) %>%
+      mutate(
+        in_col = cut(PlateLocSide,
+          breaks = c(SZ_LEFT, SZ_LEFT+zw, SZ_LEFT+2*zw, SZ_RIGHT),
+          labels = c("L","M","R"), include.lowest = TRUE),
+        in_row = cut(PlateLocHeight,
+          breaks = c(SZ_BOT, SZ_BOT+zh, SZ_BOT+2*zh, SZ_TOP),
+          labels = c("Low","Mid","High"), include.lowest = TRUE),
+        in_zone = !is.na(in_col) & !is.na(in_row),
+        near_zone = PlateLocSide  >= SZ_LEFT - zw &
+                    PlateLocSide  <= SZ_RIGHT + zw &
+                    PlateLocHeight >= SZ_BOT - zh &
+                    PlateLocHeight <= SZ_TOP + zh,
+        zone = case_when(
+          in_zone & in_col=="L" & in_row=="High" ~ "1",
+          in_zone & in_col=="M" & in_row=="High" ~ "2",
+          in_zone & in_col=="R" & in_row=="High" ~ "3",
+          in_zone & in_col=="L" & in_row=="Mid"  ~ "4",       in_zone & in_col=="M" & in_row=="Mid"  ~ "5",
+          in_zone & in_col=="R" & in_row=="Mid"  ~ "6",
+          in_zone & in_col=="L" & in_row=="Low"  ~ "7",
+          in_zone & in_col=="M" & in_row=="Low"  ~ "8",
+          in_zone & in_col=="R" & in_row=="Low"  ~ "9",
+          !in_zone & near_zone & PlateLocSide <  0 & PlateLocHeight >= (SZ_BOT+SZ_TOP)/2 ~ "11",
+          !in_zone & near_zone & PlateLocSide >= 0 & PlateLocHeight >= (SZ_BOT+SZ_TOP)/2 ~ "12",
+          !in_zone & near_zone & PlateLocSide <  0 & PlateLocHeight <  (SZ_BOT+SZ_TOP)/2 ~ "13",
+          !in_zone & near_zone & PlateLocSide >= 0 & PlateLocHeight <  (SZ_BOT+SZ_TOP)/2 ~ "14",
+          TRUE ~ NA_character_
+        )
+      ) %>%
       filter(!is.na(zone)) %>%
       count(zone) %>%
-      mutate(pct = n / sum(n)) %>%
-      right_join(ZONE13_COORDS, by = "zone") %>%
-      mutate(
-        pct   = tidyr::replace_na(pct, 0),
-        label = scales::percent(pct, accuracy = 1),
-        is_outer = zone %in% c("11","12","13","14"),
-        w = ifelse(is_outer, 1.1, 0.9),
-        h = ifelse(is_outer, 1.5, 0.9),
-        xmin = x - w / 2, xmax = x + w / 2,
-        ymin = y - h / 2, ymax = y + h / 2,
-        text_dark  = ifelse(pct < 0.12, label, ""),
-        text_light = ifelse(pct >= 0.12, label, "")
+      mutate(pct = n / sum(n))
+
+    # Fill in any missing zones with 0
+    all_zones <- tibble(zone = as.character(c(1:9, 11:14)))
+    d_raw <- left_join(all_zones, d_raw, by = "zone") %>%
+      mutate(pct = replace_na(pct, 0), n = replace_na(n, 0))
+
+    pct_lookup <- setNames(d_raw$pct, d_raw$zone)
+
+    # --- Build rectangle data frame for drawing ---
+    # Coordinate system: inner grid spans x[-1.5,1.5], y[-1.5,1.5] # Outer margin = 1 unit on every side → outer boundary x[-2.5,2.5], y[-2.5,2.5]
+
+    inner_cells <- tribble(
+      ~zone, ~xmin, ~xmax, ~ymin, ~ymax, ~lx,  ~ly,
+      "1",  -1.5,  -0.5,   0.5,   1.5,  -1.0,  1.0,
+      "2",  -0.5,   0.5,   0.5,   1.5,   0.0,  1.0,
+      "3",   0.5,   1.5,   0.5,   1.5,   1.0,  1.0,
+      "4",  -1.5,  -0.5,  -0.5,   0.5,  -1.0,  0.0,
+      "5",  -0.5,   0.5,  -0.5,   0.5,   0.0,  0.0,
+      "6",   0.5,   1.5,  -0.5,   0.5,   1.0,  0.0,
+      "7",  -1.5,  -0.5,  -1.5,  -0.5,  -1.0, -1.0,
+      "8",  -0.5,   0.5,  -1.5,  -0.5,   0.0, -1.0,
+      "9",   0.5,   1.5,  -1.5,  -0.5,   1.0, -1.0
+    )
+
+    # Outer zones drawn as quadrants first (inner grid draws on top)
+    outer_cells <- tribble(
+      ~zone, ~xmin, ~xmax, ~ymin, ~ymax, ~lx,  ~ly,
+      "11", -2.5,   0.0,   0.0,   2.5,  -2.0,  2.0,
+      "12",  0.0,   2.5,   0.0,   2.5,   2.0,  2.0,
+      "13", -2.5,   0.0,  -2.5,   0.0,  -2.0, -2.0,
+      "14",  0.0,   2.5,  -2.5,   0.0,   2.0, -2.0
+    )
+
+    add_pct <- function(df) {
+      df %>% mutate(
+        pct_val  = pct_lookup[zone],
+        pct_lab  = if_else(is.na(pct_val) | pct_val == 0, "—",
+                           paste0(round(pct_val * 100), "%")),
+        txt_col  = ifelse(!is.na(pct_val) & pct_val >= 0.15, "white", "#1a1a2e")
       )
+    }
 
-    p <- ggplot(d) +
-      geom_rect(aes(xmin = xmin, xmax = xmax, ymin = ymin, ymax = ymax,
-                    fill = pct, text = paste0("Zone ", zone, ": ", label)),
-                color = "white", linewidth = 1.5) +
-      geom_text(aes(x = x, y = y, label = text_dark),
-                color = "#1A202C", fontface = "bold", size = 4) +
-      geom_text(aes(x = x, y = y, label = text_light),
-                color = "white", fontface = "bold", size = 4) +
-      annotate("rect", xmin = -1.5, xmax = 1.5, ymin = -0.5, ymax = 2.5,
-               fill = NA, color = "#1A202C", linewidth = 1.5) +
-      scale_fill_gradient(low = "#F1F5F9", high = "#015294", guide = "none") +
-      labs(title    = "Zone from Catcher's Perspective",
-           subtitle = "% of pitches by zone",
-           x = NULL, y = NULL) +
+    outer_cells <- add_pct(outer_cells)
+    inner_cells <- add_pct(inner_cells)
+
+    fill_scale <- colorRampPalette(c("#ffffff", "#ffffff", "#f5c0b0", "#C0392B"))(100)
+    fill_fn    <- function(v) {
+      idx <- pmax(1, pmin(100, round((pmax(v - 0.05, 0) / 0.15) * 80) + 1))
+      fill_scale[idx]
+    }
+
+    p <- ggplot() +
+      # Outer zones first (drawn behind inner grid)
+      geom_rect(data = outer_cells,
+                aes(xmin=xmin, xmax=xmax, ymin=ymin, ymax=ymax),
+                fill = fill_fn(outer_cells$pct_val),
+                color = "black", linewidth = 1.2) +
+      geom_text(data = outer_cells,
+                aes(x=lx, y=ly, label=pct_lab, color=txt_col),
+                size = 4, fontface = "bold") +
+      # Inner grid on top
+      geom_rect(data = inner_cells,
+                aes(xmin=xmin, xmax=xmax, ymin=ymin, ymax=ymax),
+                fill = fill_fn(inner_cells$pct_val),
+                color = "black", linewidth = 1.2) +
+      geom_text(data = inner_cells,
+                aes(x=lx, y=ly, label=pct_lab, color=txt_col),
+                size = 4, fontface = "bold") +
+      scale_color_identity() +
+      coord_fixed(xlim = c(-2.5, 2.5), ylim = c(-2.5, 2.5), expand = FALSE) +
+      labs(title    = "Zone Profile",
+           subtitle = "Catcher's-eye view — looking out toward the pitcher",
+           x = NULL, y = NULL,
+           caption  = "Zone from Catcher's Perspective") +
       theme_seagulls() +
-      theme(axis.text = element_blank(), panel.grid = element_blank())
+      theme(axis.text  = element_blank(), axis.ticks = element_blank(),
+            panel.grid = element_blank(),
+            plot.title = element_text(face = "bold", size = 13,
+                                      color = "#0a1628", margin = margin(b = 6)))
 
-    ggplotly(p, tooltip = "text") %>%
+    ggplotly(p, tooltip = character(0)) %>%
       layout(
-        yaxis         = list(scaleanchor = "x", scaleratio = 1),
-        paper_bgcolor = "white", plot_bgcolor = "white",
-        font          = list(color = "#1A202C")
+        yaxis         = list(scaleanchor = "x", scaleratio = 1,
+                             range = c(-2.6, 2.6), visible = FALSE),
+        xaxis         = list(range = c(-2.6, 2.6), visible = FALSE),
+        margin        = list(t = 40, b = 40, l = 20, r = 20),
+        paper_bgcolor = "white",
+        plot_bgcolor  = "white"
       ) %>%
-      config(displayModeBar = FALSE)
+      config(displayModeBar = FALSE) %>%
+      style(hoverinfo = "none")
   })
 
   # ── Chart 4: Pitcher Leaderboard ──────────────────────────────────────────
@@ -421,7 +547,7 @@ server <- function(input, output, session) {
     dt <- datatable(d,
       options = list(
         pageLength = 10,
-        order      = list(list(3, "desc"))
+        order      = list(list(2, "desc"))
       ),
       rownames = FALSE
     ) %>%
@@ -434,6 +560,11 @@ server <- function(input, output, session) {
       formatStyle("Whiff%",
         background = styleInterval(c(0.19, 0.30),
           c("#fff3e0", "white", "#e0f5f2"))
+      ) %>%
+      formatStyle("Pitches",
+        target    = "row",
+        color     = styleInterval(14, c("#aaaaaa", "inherit")),
+        fontStyle = styleInterval(14, c("italic", "normal"))
       )
     dt
   })
@@ -463,6 +594,9 @@ server <- function(input, output, session) {
       geom_hline(yintercept = 0, color = "#CBD5E1", linewidth = 0.5) +
       geom_vline(xintercept = 0, color = "#CBD5E1", linewidth = 0.5) +
       geom_point(alpha = 0.85) +
+      geom_text(aes(label = PitchCategory),
+                size = 3.2, hjust = -0.2, vjust = 0.5,
+                show.legend = FALSE) +
       scale_color_manual(values = PITCH_CATEGORY_COLORS) +
       scale_size_continuous(range = c(4, 12)) +
       coord_fixed() +
@@ -511,44 +645,84 @@ server <- function(input, output, session) {
   # ── Chart 9: Spray Chart (coach — PlayResult coloring + ExitSpeed sizing) ────
   output$plot_spray <- renderPlotly({
     req(nrow(fdata()) > 0)
+
     d <- fdata() %>%
-      filter(!is.na(Direction), !is.na(Distance),
-             PlayResult %in% c("Single","Double","Triple","HomeRun","Out")) %>%
+      filter(PlayResult %in% c("Single","Double","Triple","HomeRun","Out"),
+             !is.na(Direction), !is.na(Distance)) %>%
       mutate(
-        spray_x  = Distance * sin(Direction * pi / 180),
-        spray_y  = Distance * cos(Direction * pi / 180),
-        ev_label = ifelse(is.na(ExitSpeed), "",
-                          paste0("<br>EV: ", round(ExitSpeed, 1), " mph"))
+        spray_x = Distance * sin(Direction * pi / 180),
+        spray_y = Distance * cos(Direction * pi / 180)
       )
     req(nrow(d) > 0)
 
     result_colors <- c(Single = "#2DC653", Double = "#F5C518",
                        Triple = "#FF8C00", HomeRun = "#E63946", Out = "#AAAAAA")
+    active <- spray_click_filter()
+
+    d <- d %>% mutate(
+      alpha_val = if (is.null(active)) 0.75
+                  else ifelse(PlayResult == active, 0.95, 0.12),
+      size_val  = if (is.null(active)) 6
+                  else ifelse(PlayResult == active, 8, 4)
+    )
+
     outline <- field_outline_df()
 
-    p <- ggplot(d, aes(
-        x = spray_x, y = spray_y, color = PlayResult, size = ExitSpeed,
-        text = paste0(Batter, "<br>", PlayResult, "<br>",
-                      round(Distance, 0), " ft", ev_label)
-      )) +
-      geom_path(data = outline, aes(x = x, y = y), inherit.aes = FALSE,
-                color = "gray70", linewidth = 0.5) +
-      geom_point(alpha = 0.72) +
-      scale_color_manual(values = result_colors) +
-      scale_size_continuous(range = c(1.2, 2.5), guide = "none") +
-      coord_fixed(xlim = c(-350, 350), ylim = c(0, 430)) +
-      labs(title = "Batted Ball Chart", subtitle = "Size = Exit Velocity",
-           x = NULL, y = NULL, color = NULL) +
-      theme_seagulls() +
-      theme(axis.text = element_blank(), panel.grid = element_blank())
-    plotly_clean(ggplotly(p, tooltip = "text"))
+    title_txt <- if (!is.null(active))
+      paste0("Batted Ball Chart — ", active,
+             "s only  <i>(click again or double-click to clear)</i>")
+    else
+      "Batted Ball Chart  <i>(click a dot to filter by result type)</i>"
+
+    p <- plot_ly(source = "spray_chart") %>%
+      add_trace(
+        data = outline, type = "scatter", mode = "lines",
+        x = ~x, y = ~y,
+        line = list(color = "gray70", width = 1.5),
+        hoverinfo = "none", showlegend = FALSE
+      )
+
+    for (result in c("HomeRun","Triple","Double","Single","Out")) {
+      sub <- d %>% filter(PlayResult == result)
+      if (nrow(sub) == 0) next
+      p <- p %>% add_trace(
+        data       = sub,
+        type       = "scatter", mode = "markers",
+        x          = ~spray_x, y = ~spray_y,
+        name       = result,
+        customdata = ~PlayResult,
+        marker     = list(
+          color   = result_colors[result],
+          size    = sub$size_val,
+          opacity = sub$alpha_val,
+          line    = list(width = 0)
+        ),
+        text = ~paste0(Batter, "<br>", PlayResult,
+                       "<br>EV: ", ifelse(is.na(ExitSpeed), "—",
+                                          paste0(round(ExitSpeed, 1), " mph")),
+                       "<br>Dist: ", ifelse(is.na(Distance), "—",
+                                            paste0(round(Distance), " ft"))),
+        hoverinfo = "text"
+      )
+    }
+
+    p %>% layout(
+      title         = list(text = title_txt, font = list(size = 13), x = 0),
+      xaxis         = list(visible = FALSE, range = c(-350, 350)),
+      yaxis         = list(visible = FALSE, range = c(-30, 430),
+                           scaleanchor = "x", scaleratio = 1),
+      showlegend    = TRUE,
+      legend        = list(orientation = "v"),
+      paper_bgcolor = "white", plot_bgcolor = "white"
+    ) %>%
+      config(displayModeBar = FALSE)
   })
 
 
   # ── Chart 11: Batter Leaderboard ──────────────────────────────────────────
   output$table_batters <- renderDT({
-    req(nrow(fdata()) > 0)
-    d <- fdata() %>%
+    req(nrow(fdata_hitting()) > 0)
+    d <- fdata_hitting() %>%
       group_by(Batter) %>%
       summarise(
         PA     = n_distinct(paste(Date, Inning, PAofInning)),
@@ -568,74 +742,224 @@ server <- function(input, output, session) {
         .groups = "drop"
       ) %>%
       mutate(
-        AB  = PA - BB,
-        TB  = Single + 2*Double + 3*Triple + 4*HR,
-        AVG = if_else(AB > 0, H / AB, NA_real_),
-        OBP = if_else(PA > 0, (H + BB) / PA, NA_real_),
-        SLG = if_else(AB > 0, TB / AB, NA_real_),
+        AB    = PA - BB,
+        TB    = Single + 2*Double + 3*Triple + 4*HR,
+        AVG   = if_else(AB > 0, H / AB, NA_real_),
+        OBP   = if_else(PA > 0, (H + BB) / PA, NA_real_),
+        SLG   = if_else(AB > 0, TB / AB, NA_real_),
         `K%`  = K  / PA,
-        `BB%` = BB / PA
+        `BB%` = BB / PA,
+        `BB/K` = if_else(K > 0, round(BB / K, 2), NA_real_)
       ) %>%
       left_join(roster_positions[, c("player_name","position")],
                 by = c("Batter" = "player_name")) %>%
       select(Batter, Position = position, PA, AVG, OBP, SLG,
-             `K%`, `BB%`, `Avg EV` = avg_ev,
+             `K%`, `BB%`, `BB/K`, `Avg EV` = avg_ev,
              `Hard Hit%` = hh_pct, `Barrel%` = brl_pct)
 
     datatable(d,
-      options  = list(pageLength = 10, order = list(list(4, "desc"))),
+      options  = list(pageLength = 10, order = list(list(9, "desc"))),
       rownames = FALSE
     ) %>%
       formatRound(c("AVG","OBP","SLG"), digits = 3) %>%
+      formatRound("BB/K", digits = 2) %>%
       formatPercentage(c("K%","BB%","Hard Hit%","Barrel%"), digits = 1) %>%
       formatRound("Avg EV", digits = 1) %>%
+      formatStyle("PA",
+        target    = "row",
+        color     = styleInterval(14, c("#aaaaaa", "inherit")),
+        fontStyle = styleInterval(14, c("italic", "normal"))
+      ) %>%
       formatStyle("Avg EV",
         background = styleInterval(c(82, 92),
           c("#fff3e0", "white", "#e0f5f2"))
       )
   })
 
-  # ── Chart 12: Swing Rate by Zone (13-zone) ────────────────────────────────
-  output$plot_swing_zones <- renderPlotly({
+  # ── Plate Discipline by Situation ─────────────────────────────────────────
+  output$table_plate_discipline <- DT::renderDT({
     req(nrow(fdata()) > 0)
+
     d <- fdata() %>%
       filter(!is.na(PlateLocSide), !is.na(PlateLocHeight)) %>%
       mutate(
-        zone  = classify_zone13(PlateLocSide, PlateLocHeight),
+        in_zone   = PlateLocSide   >= SZ_LEFT & PlateLocSide   <= SZ_RIGHT &
+                    PlateLocHeight >= SZ_BOT  & PlateLocHeight <= SZ_TOP,
+        swing     = PitchCall %in% c("StrikeSwinging","FoulBallNotFieldable",
+                                     "FoulBallFieldable","InPlay"),
+        whiff     = PitchCall == "StrikeSwinging",
+        chase     = !in_zone & swing,
+        situation = case_when(
+          Balls == 0 & Strikes == 0  ~ "First Pitch",
+          Count %in% HITTER_COUNTS   ~ "Hitter's Count",
+          Count %in% PITCHER_COUNTS  ~ "Pitcher's Count",
+          Count %in% TWO_K_COUNTS    ~ "2 Strikes",
+          TRUE                       ~ NA_character_
+        )
+      ) %>%
+      filter(!is.na(situation)) %>%
+      group_by(Situation = situation) %>%
+      summarise(
+        Pitches  = n(),
+        `Zone%`  = paste0(round(mean(in_zone, na.rm = TRUE) * 100), "%"),
+        `Swing%` = paste0(round(mean(swing,   na.rm = TRUE) * 100), "%"),
+        `Chase%` = paste0(round(
+                     sum(chase, na.rm = TRUE) /
+                     pmax(sum(!in_zone, na.rm = TRUE), 1) * 100), "%"),
+        `Whiff%` = paste0(round(
+                     sum(whiff, na.rm = TRUE) /
+                     pmax(sum(swing,  na.rm = TRUE), 1) * 100), "%"),
+        .groups  = "drop"
+      ) %>%
+      mutate(Situation = factor(Situation,
+        levels = c("First Pitch","Hitter's Count","Pitcher's Count","2 Strikes"))) %>%
+      arrange(Situation)
+
+    DT::datatable(d, rownames = FALSE,
+      options = list(
+        dom        = "t",
+        ordering   = FALSE,
+        pageLength = 10,
+        columnDefs = list(
+          list(className = "dt-left",   targets = 0),
+          list(className = "dt-center", targets = "_all")
+        )
+      ),
+      class = "compact stripe"
+    ) %>%
+      DT::formatStyle("Situation",
+        fontWeight = "bold", textAlign = "left", fontSize = "14px") %>%
+      DT::formatStyle(c("Zone%","Swing%","Chase%","Whiff%"),
+        textAlign = "center", fontSize = "13px") %>%
+      DT::formatStyle("Pitches",
+        textAlign = "center", color = "#999999", fontSize = "12px")
+  })
+
+  # ── Chart 12: Swing Rate by Zone (13-zone) ────────────────────────────────
+  output$plot_swing_zones <- renderPlotly({
+    req(nrow(fdata()) > 0)
+
+    zw <- (SZ_RIGHT - SZ_LEFT) / 3
+    zh <- (SZ_TOP   - SZ_BOT)  / 3
+
+    d_raw <- fdata() %>%
+      filter(!is.na(PlateLocSide), !is.na(PlateLocHeight)) %>%
+      mutate(
+        in_col = cut(PlateLocSide,
+          breaks = c(SZ_LEFT, SZ_LEFT+zw, SZ_LEFT+2*zw, SZ_RIGHT),
+          labels = c("L","M","R"), include.lowest = TRUE),
+        in_row = cut(PlateLocHeight,
+          breaks = c(SZ_BOT, SZ_BOT+zh, SZ_BOT+2*zh, SZ_TOP),
+          labels = c("Low","Mid","High"), include.lowest = TRUE),
+        in_zone   = !is.na(in_col) & !is.na(in_row),
+        near_zone = PlateLocSide  >= SZ_LEFT - zw &
+                    PlateLocSide  <= SZ_RIGHT + zw &
+                    PlateLocHeight >= SZ_BOT - zh &
+                    PlateLocHeight <= SZ_TOP + zh,
         swing = PitchCall %in% c("StrikeSwinging","FoulBallNotFieldable",
-                                  "FoulBallFieldable","InPlay")
+                                  "FoulBallFieldable","InPlay"),
+        zone = case_when(
+          in_zone & in_col=="L" & in_row=="High" ~ "1",
+          in_zone & in_col=="M" & in_row=="High" ~ "2",
+          in_zone & in_col=="R" & in_row=="High" ~ "3",
+          in_zone & in_col=="L" & in_row=="Mid"  ~ "4",
+          in_zone & in_col=="M" & in_row=="Mid"  ~ "5",
+          in_zone & in_col=="R" & in_row=="Mid"  ~ "6",
+          in_zone & in_col=="L" & in_row=="Low"  ~ "7",
+          in_zone & in_col=="M" & in_row=="Low"  ~ "8",
+          in_zone & in_col=="R" & in_row=="Low"  ~ "9",
+          !in_zone & near_zone & PlateLocSide <  0 & PlateLocHeight >= (SZ_BOT+SZ_TOP)/2 ~ "11",
+          !in_zone & near_zone & PlateLocSide >= 0 & PlateLocHeight >= (SZ_BOT+SZ_TOP)/2 ~ "12",
+          !in_zone & near_zone & PlateLocSide <  0 & PlateLocHeight <  (SZ_BOT+SZ_TOP)/2 ~ "13",
+          !in_zone & near_zone & PlateLocSide >= 0 & PlateLocHeight <  (SZ_BOT+SZ_TOP)/2 ~ "14",
+          TRUE ~ NA_character_
+        )
       ) %>%
       filter(!is.na(zone)) %>%
       group_by(zone) %>%
-      summarise(swing_pct = mean(swing), n = n(), .groups = "drop") %>%
-      tidyr::complete(zone = ZONE13_COORDS$zone) %>%
-      right_join(ZONE13_COORDS, by = "zone")
+      summarise(pct_val = mean(swing), n = n(), .groups = "drop")
 
-    p <- ggplot(d, aes(x = x, y = y, fill = swing_pct,
-                        label = if_else(is.na(swing_pct), "—",
-                                        scales::percent(swing_pct, accuracy = 1)))) +
-      geom_tile(width = 0.95, height = 0.95, color = "white", linewidth = 1) +
-      geom_text(fontface = "bold", size = 4,
-                color = ifelse(is.na(d$swing_pct), "#999999", "#0a1628")) +
-      annotate("rect", xmin = -1.5, xmax = 1.5, ymin = -0.5, ymax = 2.5,
-               fill = NA, color = "black", linewidth = 1) +
-      scale_fill_gradient2(
-        low = "#457B9D", mid = "#f3f3f3", high = "#E63946",
-        midpoint = 0.5, na.value = "#f3f3f3",
-        labels = scales::percent_format(), name = "Swing%"
-      ) +
-      coord_fixed() +
-      labs(title = "Swing Rates by Zone",
-           subtitle = "Catcher's-eye view — includes chase zones",
-           x = NULL, y = NULL) +
-      theme_seagulls() + theme(axis.text = element_blank(), panel.grid = element_blank())
-    ggplotly(p, tooltip = "label") %>%
+    all_zones <- tibble(zone = as.character(c(1:9, 11:14)))
+    d_raw <- left_join(all_zones, d_raw, by = "zone") %>%
+      mutate(pct_val = replace_na(pct_val, 0), n = replace_na(n, 0L))
+
+    pct_lookup <- setNames(d_raw$pct_val, d_raw$zone)
+
+    outer_cells <- tribble(
+      ~zone, ~xmin, ~xmax, ~ymin, ~ymax, ~lx,  ~ly,
+      "11", -2.5,   0.0,   0.0,   2.5,  -2.0,  2.0,
+      "12",  0.0,   2.5,   0.0,   2.5,   2.0,  2.0,
+      "13", -2.5,   0.0,  -2.5,   0.0,  -2.0, -2.0,
+      "14",  0.0,   2.5,  -2.5,   0.0,   2.0, -2.0
+    )
+
+    inner_cells <- tribble(
+      ~zone, ~xmin, ~xmax, ~ymin, ~ymax, ~lx,  ~ly,
+      "1",  -1.5,  -0.5,   0.5,   1.5,  -1.0,  1.0,
+      "2",  -0.5,   0.5,   0.5,   1.5,   0.0,  1.0,
+      "3",   0.5,   1.5,   0.5,   1.5,   1.0,  1.0,
+      "4",  -1.5,  -0.5,  -0.5,   0.5,  -1.0,  0.0,
+      "5",  -0.5,   0.5,  -0.5,   0.5,   0.0,  0.0,
+      "6",   0.5,   1.5,  -0.5,   0.5,   1.0,  0.0,
+      "7",  -1.5,  -0.5,  -1.5,  -0.5,  -1.0, -1.0,
+      "8",  -0.5,   0.5,  -1.5,  -0.5,   0.0, -1.0,
+      "9",   0.5,   1.5,  -1.5,  -0.5,   1.0, -1.0
+    )
+
+    add_pct <- function(df) {
+      df %>% mutate(
+        pct_val = pct_lookup[zone],
+        pct_lab = if_else(is.na(pct_val) | pct_val == 0, "—",
+                          paste0(round(pct_val * 100), "%")),
+        txt_col = ifelse(!is.na(pct_val) & pct_val >= 0.55, "white", "#1a1a2e")
+      )
+    }
+
+    outer_cells <- add_pct(outer_cells)
+    inner_cells <- add_pct(inner_cells)
+
+    fill_scale <- colorRampPalette(c("#ffffff", "#f5c0b0", "#C0392B"))(100)
+    fill_fn    <- function(v) {
+      idx <- pmax(1, pmin(100, round((pmax(v - 0.20, 0) / 0.60) * 99) + 1))
+      fill_scale[idx]
+    }
+
+    p <- ggplot() +
+      geom_rect(data = outer_cells,
+                aes(xmin=xmin, xmax=xmax, ymin=ymin, ymax=ymax),
+                fill = fill_fn(outer_cells$pct_val),
+                color = "black", linewidth = 1.2) +
+      geom_text(data = outer_cells,
+                aes(x=lx, y=ly, label=pct_lab, color=txt_col),
+                size = 4, fontface = "bold") +
+      geom_rect(data = inner_cells,
+                aes(xmin=xmin, xmax=xmax, ymin=ymin, ymax=ymax),
+                fill = fill_fn(inner_cells$pct_val),
+                color = "black", linewidth = 1.2) +
+      geom_text(data = inner_cells,
+                aes(x=lx, y=ly, label=pct_lab, color=txt_col),
+                size = 4, fontface = "bold") +
+      scale_color_identity() +
+      coord_fixed(xlim = c(-2.5, 2.5), ylim = c(-2.5, 2.5), expand = FALSE) +
+      labs(title    = "Swing Rates by Zone",
+           subtitle = "Catcher's-eye view — looking out toward the pitcher",
+           x = NULL, y = NULL,
+           caption  = "Zone from Catcher's Perspective") +
+      theme_seagulls() +
+      theme(axis.text = element_blank(), axis.ticks = element_blank(),
+            panel.grid = element_blank())
+
+    ggplotly(p, tooltip = character(0)) %>%
       layout(
-        yaxis         = list(scaleanchor = "x", scaleratio = 1),
-        paper_bgcolor = "white", plot_bgcolor = "white",
-        font = list(color = "#1A202C")
+        yaxis         = list(scaleanchor = "x", scaleratio = 1,
+                             range = c(-2.6, 2.6), visible = FALSE),
+        xaxis         = list(range = c(-2.6, 2.6), visible = FALSE),
+        margin        = list(t = 40, b = 40, l = 20, r = 20),
+        paper_bgcolor = "white",
+        plot_bgcolor  = "white"
       ) %>%
-      config(displayModeBar = FALSE)
+      config(displayModeBar = FALSE) %>%
+      style(hoverinfo = "none")
   })
 
 
@@ -670,8 +994,8 @@ server <- function(input, output, session) {
       return(blank(paste0("Not enough hard-contact data for ", input$player,
                           " in this sample (need ≥ 10 batted balls at 80+ mph).")))
 
-    hp_x <- c(SZ_LEFT, SZ_RIGHT, SZ_RIGHT, 0, SZ_LEFT, SZ_LEFT)
-    hp_y <- c(0, 0, -0.25, -0.5, -0.25, 0)
+    hp_x <- c(-0.83,  0.83,  0.83,  0.00, -0.83)
+    hp_y <- c( 0.00,  0.00, -0.25, -0.50, -0.25)
 
     plot_ly() %>%
       add_trace(
@@ -704,9 +1028,9 @@ server <- function(input, output, session) {
                         "(n = ", nrow(d), ")</sup>"),
           font = list(size = 13, color = "#1A202C"), x = 0.05
         ),
-        xaxis = list(range = c(-2.5, 2.5), visible = FALSE,
-                     scaleanchor = "y", scaleratio = 1),
-        yaxis = list(range = c(-0.7, 5.0), visible = FALSE),
+        xaxis = list(range = c(-2.5, 2.5), visible = FALSE),
+        yaxis = list(range = c(-0.6, 5.0), visible = FALSE,
+                     scaleanchor = "x", scaleratio = 1),
         paper_bgcolor = "white", plot_bgcolor = "white",
         margin = list(t = 80, b = 20, l = 20, r = 20)
       ) %>%
@@ -723,17 +1047,6 @@ server <- function(input, output, session) {
     gbp  <- gb_pct(d$TaggedHitType)
     fmt  <- function(x) if (is.na(x)) "—" else scales::percent(x, accuracy = 1)
 
-    best_whiff <- d %>%
-      group_by(TaggedPitchType) %>%
-      summarise(wp = whiff_pct(PitchCall), n = n(), .groups = "drop") %>%
-      filter(n >= 10) %>%
-      slice_max(wp, n = 1, with_ties = FALSE)
-
-    sentence <- if (nrow(best_whiff) > 0 && !is.na(best_whiff$wp))
-      paste0("Best whiff pitch: ", best_whiff$TaggedPitchType,
-             " (", fmt(best_whiff$wp), ")")
-    else NULL
-
     tagList(
       div(
         style = "padding:12px 0 8px;",
@@ -743,10 +1056,7 @@ server <- function(input, output, session) {
           stat_tile("Whiff%",  fmt(wpct), tile_class(wpct, 0.30, 0.19)),
           stat_tile("CSW%",    fmt(cswp), tile_class(cswp, 0.28, 0.20)),
           stat_tile("GB%",     fmt(gbp),  tile_class(gbp,  0.45, 0.30))
-        ),
-        if (!is.null(sentence))
-          tags$p(sentence,
-                 style = "font-size:12px; color:#555; margin:2px 0 8px;")
+        )
       )
     )
   })
@@ -827,7 +1137,7 @@ server <- function(input, output, session) {
       new_data$Season <- "Fall 2025"
       app_data(new_data)
 
-      if (input$view_mode == "Pitching") {
+      if (is.null(input$main_tabs) || input$main_tabs == "Pitching") {
         updatePickerInput(session, "player",
           choices  = c("All Players", sort(unique(new_data$Pitcher))),
           selected = "All Players"
@@ -855,6 +1165,234 @@ server <- function(input, output, session) {
         )
       })
     })
+  })
+
+  # ── Coach: Pitching glance row ─────────────────────────────────────────────
+  output$coach_pitch_glance <- renderUI({
+    req(nrow(fdata()) > 0)
+    d    <- fdata()
+    spct <- strike_pct(d$PitchCall)
+    wpct <- whiff_pct(d$PitchCall)
+    cswp <- csw_pct(d$PitchCall)
+    gbp  <- gb_pct(d$TaggedHitType)
+    fmt  <- function(x) if (is.na(x)) "—" else scales::percent(x, accuracy = 1)
+
+    tagList(
+      div(
+        style = "padding:12px 0 8px;",
+        layout_columns(
+          col_widths = breakpoints(sm = 6, md = 3),
+          stat_tile("Strike%", fmt(spct), tile_class(spct, 0.65, 0.54)),
+          stat_tile("Whiff%",  fmt(wpct), tile_class(wpct, 0.30, 0.19)),
+          stat_tile("CSW%",    fmt(cswp), tile_class(cswp, 0.28, 0.20)),
+          stat_tile("GB%",     fmt(gbp),  tile_class(gbp,  0.45, 0.30))
+        )
+      )
+    )
+  })
+
+  # ── Coach: Hitting glance row ──────────────────────────────────────────────
+  output$coach_hit_glance <- renderUI({
+    req(nrow(fdata()) > 0)
+    d    <- fdata()
+    d_ip <- d %>% filter(PitchCall == "InPlay", !is.na(ExitSpeed))
+    avg_ev <- mean(d_ip$ExitSpeed, na.rm = TRUE)
+    hh     <- hard_hit_pct(d_ip$ExitSpeed)
+    brl    <- barrel_pct(d_ip$ExitSpeed, d_ip$Angle)
+
+    team_avgs <- d %>%
+      group_by(Batter) %>%
+      summarise(
+        PA = n_distinct(paste(Date, Inning, PAofInning)),
+        H  = sum(PlayResult %in% c("Single","Double","Triple","HomeRun"), na.rm = TRUE),
+        BB = sum(KorBB == "Walk", na.rm = TRUE),
+        .groups = "drop"
+      ) %>%
+      summarise(total_H = sum(H), total_AB = sum(PA - BB))
+    tavg <- if (team_avgs$total_AB > 0) team_avgs$total_H / team_avgs$total_AB else NA_real_
+
+    fmt_ev  <- function(x) if (is.na(x)) "—" else paste0(round(x, 1), " mph")
+    fmt_pct <- function(x) if (is.na(x)) "—" else scales::percent(x, accuracy = 1)
+    fmt_avg <- function(x) if (is.na(x)) "—" else formatC(x, digits = 3, format = "f")
+
+    div(
+      style = "padding:12px 0 8px;",
+      layout_columns(
+        col_widths = breakpoints(sm = 6, md = 3),
+        stat_tile("AVG",       fmt_avg(tavg),  tile_class(tavg,   0.300, 0.230)),
+        stat_tile("Hard Hit%", fmt_pct(hh),    tile_class(hh,     0.40,  0.25)),
+        stat_tile("Barrel%",   fmt_pct(brl),   tile_class(brl,    0.08,  0.04)),
+        stat_tile("Avg EV",    fmt_ev(avg_ev), tile_class(avg_ev, 92,    82))
+      )
+    )
+  })
+
+  # ── Sync status display ────────────────────────────────────────────────────
+  output$sync_status <- renderUI({ NULL })
+
+  # ── Google Drive sync handler ──────────────────────────────────────────────
+  observeEvent(input$sync_data, {
+    req(user_role() == "coach")
+
+    folder_id <- Sys.getenv("SEAGULLS_DRIVE_FOLDER_ID")
+    if (nchar(folder_id) == 0) {
+      output$sync_status <- renderUI({
+        tags$small(
+          "Set SEAGULLS_DRIVE_FOLDER_ID in .Renviron and restart the app.",
+          style = "color:#F4A261; font-size:11px; display:block; margin-top:4px;"
+        )
+      })
+      return()
+    }
+
+    output$sync_status <- renderUI({
+      tags$small("Syncing…",
+                 style = "color:#555; font-size:11px; display:block; margin-top:4px;")
+    })
+
+    tryCatch({
+      n_new  <- sync_from_drive(folder_id)
+      n_rows <- build_combined_csv()
+
+      new_data <- readr::read_csv("all_fall_25.csv", show_col_types = FALSE)
+      new_data$TaggedPitchType <- dplyr::if_else(
+        new_data$TaggedPitchType %in% c("Other", NA_character_),
+        "Undefined", new_data$TaggedPitchType
+      )
+      new_data$Count        <- paste0(new_data$Balls, "-", new_data$Strikes)
+      new_data$PitchCategory <- PITCH_CATEGORY_MAP[new_data$TaggedPitchType]
+      new_data$PitchCategory[is.na(new_data$PitchCategory)] <- "Undefined"
+      new_data$PitchCategory <- factor(new_data$PitchCategory,
+        levels = c("Fastball", "Breaking Ball", "Offspeed", "Undefined"))
+      new_data$Season <- "Fall 2025"
+      app_data(new_data)
+
+      if (is.null(input$main_tabs) || input$main_tabs == "Pitching") {
+        updatePickerInput(session, "player",
+          choices  = c("All Players", sort(unique(new_data$Pitcher))),
+          selected = "All Players"
+        )
+      } else {
+        updatePickerInput(session, "player",
+          choices  = c("All Players", sort(unique(new_data$Batter))),
+          selected = "All Players"
+        )
+      }
+
+      output$sync_status <- renderUI({
+        tags$small(
+          paste0("✓ ", n_new, " new file(s) — ",
+                 format(n_rows, big.mark = ","), " pitches loaded"),
+          style = "color:#2A9D8F; font-size:11px; display:block; margin-top:4px;"
+        )
+      })
+    }, error = function(e) {
+      output$sync_status <- renderUI({
+        tags$small(
+          paste0("Error: ", conditionMessage(e)),
+          style = "color:#E63946; font-size:11px; display:block; margin-top:4px;
+                  word-break:break-word;"
+        )
+      })
+    })
+  })
+
+  # ── Player: sidebar identity block ────────────────────────────────────────
+  output$player_sidebar_identity <- renderUI({
+    req(user_role() == "player")
+    name    <- user_display_name()
+    pos_row <- roster_positions %>% filter(player_name == user_player_name())
+    jersey   <- if (nrow(pos_row) > 0) pos_row$jersey[1]   else ""
+    position <- if (nrow(pos_row) > 0) pos_row$position[1] else ""
+
+    div(
+      style = "padding:16px; text-align:center;",
+      div(style = "display:flex; justify-content:center; margin-bottom:12px;",
+          player_photo_tag(user_player_name(), size = "80px")),
+      tags$p(name,
+             style = "color:#ffffff; font-weight:700; font-size:14px; margin:0 0 4px;"),
+      tags$small(paste0("#", jersey, "  ·  ", position),
+                 style = "color:#8BA4B8; font-size:12px;")
+    )
+  })
+
+  # ── Player: sidebar game navigator + filters ──────────────────────────────
+  output$player_sidebar_nav <- renderUI({
+    req(user_role() == "player")
+    ptype   <- user_player_type()
+    seasons <- player_fdata_base() %>% pull(Season) %>% unique() %>% sort(decreasing = TRUE)
+    if (length(seasons) == 0) seasons <- "Fall 2025"
+    n_games <- length(player_games())
+    window  <- if (is.null(input$player_window)) "This Game" else input$player_window
+
+    # Pitching/Hitting toggle — block the unavailable side for non-two-way players
+    init_mode <- if (ptype %in% c("pitcher", "two-way")) "Pitching" else "Hitting"
+    cur_mode  <- if (is.null(input$player_view_mode)) init_mode else input$player_view_mode
+
+    make_mode_btn <- function(label, cur, ptype) {
+      is_active    <- label == cur
+      is_disabled  <- (label == "Pitching" && ptype == "hitter") ||
+                      (label == "Hitting"  && ptype == "pitcher")
+      btn_style <- paste0(
+        "flex:1; font-size:12px; padding:4px 0; border:1px solid;",
+        if (is_disabled) " opacity:0.35; cursor:not-allowed; pointer-events:none; border-color:#475569; background:transparent; color:#CBD5E1;"
+        else if (is_active) " background:#1D4ED8; border-color:#1D4ED8; color:#fff;"
+        else " background:transparent; border-color:#475569; color:#CBD5E1;"
+      )
+      onclick <- if (!is_disabled && !is_active)
+        sprintf("Shiny.setInputValue('player_view_mode','%s',{priority:'event'})", label)
+      else NULL
+      tags$button(label, style = btn_style, onclick = onclick)
+    }
+
+    tagList(
+      div(
+        style = "padding:12px 16px 0;",
+        tags$p("MODE", style = "color:#8BA4B8; font-size:10px; font-weight:700;
+                                 letter-spacing:1px; margin:0 0 5px;"),
+        div(style = "margin-bottom:10px; display:flex; gap:4px;",
+            make_mode_btn("Pitching", cur_mode, ptype),
+            make_mode_btn("Hitting",  cur_mode, ptype)),
+        tags$p("SEASON", style = "color:#8BA4B8; font-size:10px; font-weight:700;
+                                   letter-spacing:1px; margin:0 0 5px;"),
+        div(style = "margin-bottom:10px;",
+            selectInput("player_season", NULL,
+                        choices = seasons, selected = seasons[1], width = "100%")),
+        tags$p("VIEW", style = "color:#8BA4B8; font-size:10px; font-weight:700;
+                                 letter-spacing:1px; margin:0 0 5px;"),
+        div(style = "margin-bottom:10px;",
+            radioGroupButtons("player_window", NULL,
+                              choices  = c("This Game", "Last 5", "Season"),
+                              selected = window,
+                              justified = TRUE, size = "sm"))
+      ),
+      if (n_games == 0) {
+        div(style = "padding:0 16px 12px; color:#8BA4B8; font-size:12px;",
+            "No games recorded yet.")
+      } else if (window == "This Game") {
+        game_date <- tryCatch(format(selected_game(), "%B %d, %Y"), error = function(e) "—")
+        idx <- game_index()
+        div(
+          style = "padding:0 16px 16px;",
+          tags$p(game_date, style = "color:#fff; font-size:13px; font-weight:600;
+                                      text-align:center; margin:0 0 3px;"),
+          tags$p(paste0("Game ", n_games - idx + 1L, " of ", n_games),
+                 style = "color:#8BA4B8; font-size:11px; text-align:center; margin:0 0 10px;"),
+          div(style = "display:flex; gap:8px;",
+              actionButton("prev_game", "← Prev", class = "btn-sm btn-one-light",
+                           style = "flex:1;", disabled = idx >= n_games),
+              actionButton("next_game", "Next →", class = "btn-sm btn-one-light",
+                           style = "flex:1;", disabled = idx <= 1L))
+        )
+      } else {
+        div(style = "padding:0 16px 12px;",
+            tags$p(
+              if (window == "Last 5") paste0("Last ", min(5L, n_games), " games")
+              else                    paste0("Full season — ", n_games, " games"),
+              style = "color:#8BA4B8; font-size:11px; text-align:center; margin:0;"
+            ))
+      }
+    )
   })
 
   # ── Player: game list and selection ───────────────────────────────────────
@@ -887,79 +1425,218 @@ server <- function(input, output, session) {
     g[[i]]
   })
 
-  player_fdata <- reactive({
-    req(user_role() == "player")
-    player_fdata_base() %>%
-      filter(Date == selected_game())
+  player_selected_games <- reactive({
+    date_col  <- if (user_player_type() == "pitcher") "Pitcher" else "Batter"
+    all_dates <- app_data() %>%
+      filter(.data[[date_col]] == user_player_name()) %>%
+      pull(Date) %>% unique() %>% sort(decreasing = TRUE)
+
+    switch(input$player_game_window,
+      "Full Season"  = all_dates,
+      "Custom"       = as.Date(input$player_custom_games),
+      "Last 10"      = head(all_dates, 10L),
+      head(all_dates, 5L)   # "Last 5" default
+    )
   })
 
-  # Last 5 games before the selected game — used for trend baseline
+  player_fdata <- reactive({
+    date_col <- if (user_player_type() == "pitcher") "Pitcher" else "Batter"
+    count_filter <- switch(input$player_count,
+      "All"             = NULL,
+      "Pitcher's Count" = PITCHER_COUNTS,
+      "Hitter's Count"  = HITTER_COUNTS,
+      "2K"              = TWO_K_COUNTS
+    )
+
+    d <- app_data() %>%
+      filter(
+        .data[[date_col]] == user_player_name(),
+        Date %in% player_selected_games(),
+        PitchCategory %in% input$player_pitch_cats,
+        PitchCategory != "Undefined"
+      )
+
+    if (!is.null(count_filter))
+      d <- d %>% filter(Count %in% count_filter)
+
+    if (user_player_type() %in% c("pitcher", "two-way"))
+      d <- d %>% filter(Inning >= input$player_innings[1],
+                        Inning <= input$player_innings[2])
+
+    d
+  })
+
+  # ── Player spray click filter ─────────────────────────────────────────────
+  player_spray_click_filter <- reactiveVal(NULL)
+
+  observeEvent(list(input$player_game_window), {
+    player_spray_click_filter(NULL)
+  })
+
+  observeEvent(event_data("plotly_click", source = "player_spray_chart"), {
+    click <- event_data("plotly_click", source = "player_spray_chart")
+    if (!is.null(click$customdata)) {
+      clicked <- click$customdata[[1]]
+      if (identical(player_spray_click_filter(), clicked)) {
+        player_spray_click_filter(NULL)
+      } else {
+        player_spray_click_filter(clicked)
+      }
+    }
+  })
+
+  observeEvent(event_data("plotly_doubleclick", source = "player_spray_chart"), {
+    player_spray_click_filter(NULL)
+  })
+
+  player_fdata_hitting <- reactive({
+    d <- player_fdata()
+    if (!is.null(player_spray_click_filter()))
+      d <- d %>% filter(PlayResult == player_spray_click_filter())
+    d
+  })
+
+  # Trend baseline: 5 most recent games not in the current window
   player_recent_fdata <- reactive({
     req(user_role() == "player")
-    all_dates  <- player_fdata_base() %>% pull(Date) %>% unique() %>% sort(decreasing = TRUE)
-    sel        <- selected_game()
-    past_dates <- head(all_dates[all_dates < sel], 5L)
+    date_col   <- if (user_player_type() == "pitcher") "Pitcher" else "Batter"
+    sel_dates  <- player_selected_games()
+    all_dates  <- app_data() %>%
+      filter(.data[[date_col]] == user_player_name()) %>%
+      pull(Date) %>% unique() %>% sort(decreasing = TRUE)
+    past_dates <- head(all_dates[!all_dates %in% sel_dates], 5L)
     if (length(past_dates) == 0L)
-      return(player_fdata_base() %>% filter(FALSE))
-    player_fdata_base() %>% filter(Date %in% past_dates)
+      return(app_data() %>% filter(FALSE))
+    app_data() %>%
+      filter(.data[[date_col]] == user_player_name(), Date %in% past_dates)
   })
 
-  # ── Player: top-level UI ─────────────────────────────────────────────────
+  # ── Player: main content (sidebar handles identity + game nav) ───────────
   output$player_ui <- renderUI({
     req(user_role() == "player")
-    name  <- user_display_name()
-    ptype <- user_player_type()
 
-    pos_row <- roster_positions %>%
-      filter(player_name == user_player_name())
-    jersey   <- if (nrow(pos_row) > 0) pos_row$jersey[1]   else ""
-    position <- if (nrow(pos_row) > 0) pos_row$position[1] else ""
+    pname  <- user_player_name()
+    ptype  <- user_player_type()
 
-    n_games <- length(player_games())
+    roster_row <- roster_positions %>% filter(player_name == pname)
+    jersey     <- if (nrow(roster_row) > 0) roster_row$jersey[1]   else ""
+    position   <- if (nrow(roster_row) > 0) roster_row$position[1] else ""
 
-    tagList(
-      # Header
-      div(
-        style = "display:flex; justify-content:space-between; align-items:center;
-                 margin-bottom:16px; padding-bottom:12px; border-bottom:1px solid #eee;",
-        div(
-          style = "display:flex; align-items:center; gap:12px;",
-          player_photo_tag(user_player_name(), size = "56px"),
-          div(
-            tags$h5(name, style = "margin:0; color:#0a1628;"),
-            tags$small(paste0("#", jersey, " · ", position), style = "color:#666;")
+    photo_tag  <- player_photo_tag(pname, size = "72px")
+
+    date_col   <- if (ptype == "pitcher") "Pitcher" else "Batter"
+    game_dates <- app_data() %>%
+      filter(.data[[date_col]] == pname) %>%
+      pull(Date) %>% unique() %>% sort(decreasing = TRUE)
+
+    fluidPage(
+      fluidRow(
+        column(3, class = "player-sidebar-col",
+          div(style = "background:#0a1628; min-height:100vh; padding:0;
+                       display:flex; flex-direction:column;",
+
+            # Header card — logo / team name / user row
+            div(style = "margin:10px; border-radius:12px; overflow:hidden;
+                         background:#015294; border:1px solid rgba(255,255,255,0.12);
+                         padding:20px 16px 16px 16px;",
+
+              # Row 1 — Team logo
+              div(style = "text-align:center; margin-bottom:8px;",
+                tags$img(src = "seagulls_logo.png", height = "56px",
+                         style = "display:inline-block;")
+              ),
+
+              # Row 2 — Team name
+              div("SF Seagulls",
+                  style = "text-align:center; color:#ffffff; font-size:14px;
+                           font-weight:700; margin-bottom:14px; letter-spacing:0.3px;"),
+
+              # Row 3 — Name + role (left) / Log Out (right)
+              div(style = "display:flex; align-items:center;
+                           justify-content:space-between; margin-bottom:14px;",
+                div(
+                  div(pname,
+                      style = "color:#ffffff; font-size:13px; font-weight:600;
+                               line-height:1.3;"),
+                  div(paste0("(", switch(ptype,
+                               "pitcher"  = "Pitcher",
+                               "hitter"   = "Hitter",
+                               "two-way"  = "Two-Way",
+                               ptype), ")"),
+                      style = "color:#a8c8e8; font-size:11px;")
+                ),
+                actionButton("logout", "Log Out",
+                             style = "font-size:11px; padding:3px 10px;
+                                      background:transparent; color:#ffffff;
+                                      border:1px solid rgba(255,255,255,0.5);
+                                      border-radius:4px; flex-shrink:0;")
+              ),
+
+              div(style = "border-top:1px solid rgba(255,255,255,0.15); margin:0 -16px;")
+            ),
+
+            # White filter card
+            div(style = "background:#ffffff; margin:0 10px 10px 10px;
+                         padding:14px; border-radius:10px; flex:1; overflow-y:auto;",
+
+              tags$label("Season", style = "font-weight:600; font-size:12px;"),
+              selectInput("player_season", label = NULL,
+                choices = c("Fall 2025"), selected = "Fall 2025", width = "100%"),
+
+              tags$label("Games", style = "font-weight:600; font-size:12px; margin-top:8px; display:block;"),
+              radioGroupButtons("player_game_window", label = NULL,
+                choices  = c("Last 5", "Last 10", "Full Season", "Custom"),
+                selected = "Last 5", size = "sm", justified = TRUE),
+
+              conditionalPanel(
+                condition = "input.player_game_window == 'Custom'",
+                pickerInput("player_custom_games", label = NULL,
+                  choices  = as.character(game_dates),
+                  selected = as.character(head(game_dates, 5)),
+                  multiple = TRUE,
+                  options  = list(`actions-box` = TRUE, title = "Select games"))
+              ),
+
+              hr(),
+
+              tags$label("Pitch Category", style = "font-weight:600; font-size:12px;"),
+              pickerInput("player_pitch_cats", label = NULL,
+                choices  = c("Fast" = "Fastball", "Breaking" = "Breaking Ball", "Off" = "Offspeed"),
+                selected = c("Fastball", "Breaking Ball", "Offspeed"),
+                multiple = TRUE,
+                options  = list(`actions-box` = TRUE)),
+
+              hr(),
+
+              tags$label("Count", style = "font-weight:600; font-size:12px;"),
+              selectInput("player_count", label = NULL,
+                choices  = c("All", "Pitcher's Count", "Hitter's Count", "2K"),
+                selected = "All", width = "100%"),
+
+              if (ptype %in% c("pitcher", "two-way")) tagList(
+                hr(),
+                tags$label("Innings", style = "font-weight:600; font-size:12px;"),
+                sliderInput("player_innings", label = NULL,
+                  min = 1, max = 9, value = c(1, 9), step = 1, width = "100%")
+              )
+            )
           )
         ),
-        actionButton("logout", "Log Out", class = "btn-sm btn-outline-secondary")
-      ),
-      # Game browser
-      if (n_games == 0) {
-        div("No games recorded yet.", style = "color:#888; margin:24px 0;")
-      } else {
-        tagList(
-          div(
-            class = "game-nav",
-            actionButton("prev_game", "← Prev Game",
-              class = "btn-sm btn-outline-secondary",
-              disabled = game_index() >= n_games
-            ),
-            span(
-              class = "game-label",
-              format(selected_game(), "%B %d, %Y"),
-              style = "color:#0a1628;"
-            ),
-            actionButton("next_game", "Next Game →",
-              class = "btn-sm btn-outline-secondary",
-              disabled = game_index() <= 1
-            )
-          ),
-          # Section(s) based on player type
-          if (ptype %in% c("pitcher","two-way")) uiOutput("player_pitcher_section"),
-          if (ptype == "two-way") hr(),
-          if (ptype %in% c("hitter","two-way"))  uiOutput("player_hitter_section")
-        )
-      }
+
+        column(9, uiOutput("player_content"))
+      )
     )
+  })
+
+  # ── Player: content router ───────────────────────────────────────────────
+  output$player_content <- renderUI({
+    req(user_role() == "player")
+    ptype <- user_player_type()
+    if (ptype %in% c("pitcher", "two-way")) {
+      uiOutput("player_pitcher_section")
+    } else {
+      uiOutput("player_hitter_section")
+    }
   })
 
   # ── Player: pitcher section ───────────────────────────────────────────────
@@ -997,112 +1674,275 @@ server <- function(input, output, session) {
                                            d_rec$PlateLocHeight,
                                            d_rec$PitchCall)   else NA_real_
 
-    # Takeaway sentence
-    hi_thr <- c("Strike%" = 0.65, "Whiff%" = 0.30, "CSW%" = 0.28)
-    lo_thr <- c("Strike%" = 0.54, "Whiff%" = 0.19, "CSW%" = 0.20)
-    vals   <- c("Strike%" = spct,  "Whiff%" = wpct,  "CSW%" = cswp)
-    good_m <- names(vals)[!is.na(vals) & vals >= hi_thr]
-    weak_m <- names(vals)[!is.na(vals) & vals <= lo_thr]
-
-    first_clause <- if (length(good_m) > 0) {
-      paste0("Your ", good_m[1], " was strong at ", fmt(vals[good_m[1]]))
-    } else if (length(weak_m) > 0) {
-      paste0("Your ", weak_m[1], " is an area to develop (", fmt(vals[weak_m[1]]), ")")
-    } else {
-      paste0("Strike% ", fmt(spct))
-    }
-
-    best_wp <- d %>%
-      group_by(TaggedPitchType) %>%
-      summarise(wp = whiff_pct(PitchCall), n = n(), .groups = "drop") %>%
-      filter(n >= 5) %>%
-      slice_max(wp, n = 1, with_ties = FALSE)
-
-    second_clause <- if (nrow(best_wp) > 0 && !is.na(best_wp$wp))
-      paste0(" — your ", best_wp$TaggedPitchType,
-             " generated the most whiffs (", fmt(best_wp$wp), ").")
-    else "."
-
     tagList(
       tags$h6("Pitching", style = "color:#0a1628; font-weight:600; margin:12px 0 8px;"),
-      div(
-        style = "background:#f0fafb; border-left:3px solid #2A9D8F; padding:10px 14px;
-                 border-radius:4px; margin-bottom:12px; font-size:13px; color:#0a1628;",
-        paste0(first_clause, second_clause)
-      ),
       layout_columns(
         col_widths = breakpoints(sm = 6, md = 3),
-        stat_tile("Strike%", fmt(spct), tile_class(spct, 0.65, 0.54),
+        stat_tile(tagList("Strike%", metric_badge(spct, 0.65, 0.54)),
+                  fmt(spct), tile_class(spct, 0.65, 0.54),
                   trend        = mk_trend(spct, spct_base),
-                  tooltip_text = "Percent of your pitches that were strikes, swung at, or put in play."),
-        stat_tile("Whiff%",  fmt(wpct), tile_class(wpct, 0.30, 0.19),
+                  tooltip_text = "Strikes, swings, and balls in play as a share of all pitches."),
+        stat_tile(tagList("Whiff%", metric_badge(wpct, 0.30, 0.19)),
+                  fmt(wpct), tile_class(wpct, 0.30, 0.19),
                   trend        = mk_trend(wpct, wpct_base),
-                  tooltip_text = "Share of swings where the hitter completely missed — higher is better for pitchers."),
-        stat_tile("CSW%",    fmt(cswp), tile_class(cswp, 0.28, 0.20),
+                  tooltip_text = "Share of swings that completely missed — elite starters average ~26%."),
+        stat_tile(tagList("CSW%", metric_badge(cswp, 0.28, 0.20)),
+                  fmt(cswp), tile_class(cswp, 0.28, 0.20),
                   trend        = mk_trend(cswp, cswp_base),
-                  tooltip_text = "Called Strikes + Whiffs: pitches where the catcher or swing gave you a strike with no contact."),
-        stat_tile("Chase%",  fmt(chsp), tile_class(chsp, 0.30, 0.00),
+                  tooltip_text = "Called Strikes + Whiffs per pitch — the best single-pitch quality metric."),
+        stat_tile(tagList("Chase%", metric_badge(chsp, 0.30, 0.00)),
+                  fmt(chsp), tile_class(chsp, 0.30, 0.00),
                   trend        = mk_trend(chsp, chsp_base),
-                  tooltip_text = "How often hitters swung at pitches outside the strike zone — higher means better stuff.")
+                  tooltip_text = "How often hitters chased pitches outside the zone.")
       ),
+      tags$h5("Pitch Arsenal Summary",
+              style = "font-weight:700; color:#0a1628; font-size:15px; margin:16px 0 8px 4px; letter-spacing:0.2px;"),
+      DT::DTOutput("player_pitch_summary_tbl"),
       layout_columns(
         col_widths = breakpoints(sm = 12, md = 6),
-        plotlyOutput("player_zone",     height = "360px"),
+        plotlyOutput("player_zone13",    height = "360px"),
         plotlyOutput("player_movement", height = "360px")
-      )
+      ),
+      tags$h5("Pitch Log",
+              style = "font-weight:700; color:#0a1628; font-size:15px; margin:16px 0 8px 4px; letter-spacing:0.2px;"),
+      DTOutput("player_pitch_log")
     )
   })
 
-  output$player_zone <- renderPlotly({
-    d <- player_fdata()
-    req(nrow(d) > 0)
-    home_plate <- data.frame(
-      x = c(SZ_LEFT, SZ_RIGHT, SZ_RIGHT, 0, SZ_LEFT),
-      y = c(0, 0, -0.25, -0.5, -0.25)
+  output$player_zone13 <- renderPlotly({
+    req(nrow(player_fdata()) > 0)
+
+    # --- Classify pitches into zones 1-9 (inner) and 11-14 (outer) ---
+    zw <- (SZ_RIGHT - SZ_LEFT) / 3
+    zh <- (SZ_TOP   - SZ_BOT)  / 3
+
+    d_raw <- player_fdata() %>%
+      filter(!is.na(PlateLocSide), !is.na(PlateLocHeight)) %>%
+      mutate(
+        in_col = cut(PlateLocSide,
+          breaks = c(SZ_LEFT, SZ_LEFT+zw, SZ_LEFT+2*zw, SZ_RIGHT),
+          labels = c("L","M","R"), include.lowest = TRUE),
+        in_row = cut(PlateLocHeight,
+          breaks = c(SZ_BOT, SZ_BOT+zh, SZ_BOT+2*zh, SZ_TOP),
+          labels = c("Low","Mid","High"), include.lowest = TRUE),
+        in_zone = !is.na(in_col) & !is.na(in_row),
+        near_zone = PlateLocSide  >= SZ_LEFT - zw &
+                    PlateLocSide  <= SZ_RIGHT + zw &
+                    PlateLocHeight >= SZ_BOT - zh &
+                    PlateLocHeight <= SZ_TOP + zh,
+        zone = case_when(
+          in_zone & in_col=="L" & in_row=="High" ~ "1",
+          in_zone & in_col=="M" & in_row=="High" ~ "2",
+          in_zone & in_col=="R" & in_row=="High" ~ "3",
+          in_zone & in_col=="L" & in_row=="Mid"  ~ "4",       in_zone & in_col=="M" & in_row=="Mid"  ~ "5",
+          in_zone & in_col=="R" & in_row=="Mid"  ~ "6",
+          in_zone & in_col=="L" & in_row=="Low"  ~ "7",
+          in_zone & in_col=="M" & in_row=="Low"  ~ "8",
+          in_zone & in_col=="R" & in_row=="Low"  ~ "9",
+          !in_zone & near_zone & PlateLocSide <  0 & PlateLocHeight >= (SZ_BOT+SZ_TOP)/2 ~ "11",
+          !in_zone & near_zone & PlateLocSide >= 0 & PlateLocHeight >= (SZ_BOT+SZ_TOP)/2 ~ "12",
+          !in_zone & near_zone & PlateLocSide <  0 & PlateLocHeight <  (SZ_BOT+SZ_TOP)/2 ~ "13",
+          !in_zone & near_zone & PlateLocSide >= 0 & PlateLocHeight <  (SZ_BOT+SZ_TOP)/2 ~ "14",
+          TRUE ~ NA_character_
+        )
+      ) %>%
+      filter(!is.na(zone)) %>%
+      count(zone) %>%
+      mutate(pct = n / sum(n))
+
+    # Fill in any missing zones with 0
+    all_zones <- tibble(zone = as.character(c(1:9, 11:14)))
+    d_raw <- left_join(all_zones, d_raw, by = "zone") %>%
+      mutate(pct = replace_na(pct, 0), n = replace_na(n, 0))
+
+    pct_lookup <- setNames(d_raw$pct, d_raw$zone)
+
+    # --- Build rectangle data frame for drawing ---
+    # Coordinate system: inner grid spans x[-1.5,1.5], y[-1.5,1.5] # Outer margin = 1 unit on every side → outer boundary x[-2.5,2.5], y[-2.5,2.5]
+
+    inner_cells <- tribble(
+      ~zone, ~xmin, ~xmax, ~ymin, ~ymax, ~lx,  ~ly,
+      "1",  -1.5,  -0.5,   0.5,   1.5,  -1.0,  1.0,
+      "2",  -0.5,   0.5,   0.5,   1.5,   0.0,  1.0,
+      "3",   0.5,   1.5,   0.5,   1.5,   1.0,  1.0,
+      "4",  -1.5,  -0.5,  -0.5,   0.5,  -1.0,  0.0,
+      "5",  -0.5,   0.5,  -0.5,   0.5,   0.0,  0.0,
+      "6",   0.5,   1.5,  -0.5,   0.5,   1.0,  0.0,
+      "7",  -1.5,  -0.5,  -1.5,  -0.5,  -1.0, -1.0,
+      "8",  -0.5,   0.5,  -1.5,  -0.5,   0.0, -1.0,
+      "9",   0.5,   1.5,  -1.5,  -0.5,   1.0, -1.0
     )
-    p <- ggplot(d, aes(
-        x = PlateLocSide, y = PlateLocHeight, color = TaggedPitchType,
-        text = paste0(TaggedPitchType, "<br>", round(RelSpeed,1), " mph<br>", PitchCall)
-      )) +
-      geom_polygon(data = home_plate, aes(x = x, y = y),
-                   inherit.aes = FALSE, fill = "#e8e8e8", color = "#888888") +
-      annotate("rect", xmin=SZ_LEFT, xmax=SZ_RIGHT, ymin=SZ_BOT, ymax=SZ_TOP,
-               fill=NA, color="black", linewidth=0.8) +
-      geom_point(alpha = 0.6, size = 2.5) +
-      scale_color_manual(values = PITCH_COLORS, drop = FALSE) +
-      scale_x_continuous(limits = c(-2.5, 2.5)) +
-      scale_y_continuous(limits = c(-0.6, 5)) +
-      labs(title = "Pitch Location",
-           subtitle = "Catcher's-eye view — you're looking out toward the pitcher",
-           x = "Horizontal (ft)", y = "Height (ft)", color = NULL) +
-      theme_seagulls()
-    plotly_clean(ggplotly(p, tooltip = "text"))
+
+    # Outer zones drawn as quadrants first (inner grid draws on top)
+    outer_cells <- tribble(
+      ~zone, ~xmin, ~xmax, ~ymin, ~ymax, ~lx,  ~ly,
+      "11", -2.5,   0.0,   0.0,   2.5,  -2.0,  2.0,
+      "12",  0.0,   2.5,   0.0,   2.5,   2.0,  2.0,
+      "13", -2.5,   0.0,  -2.5,   0.0,  -2.0, -2.0,
+      "14",  0.0,   2.5,  -2.5,   0.0,   2.0, -2.0
+    )
+
+    add_pct <- function(df) {
+      df %>% mutate(
+        pct_val  = pct_lookup[zone],
+        pct_lab  = if_else(is.na(pct_val) | pct_val == 0, "—",
+                           paste0(round(pct_val * 100), "%")),
+        txt_col  = ifelse(!is.na(pct_val) & pct_val >= 0.15, "white", "#1a1a2e")
+      )
+    }
+
+    outer_cells <- add_pct(outer_cells)
+    inner_cells <- add_pct(inner_cells)
+
+    fill_scale <- colorRampPalette(c("#ffffff", "#ffffff", "#f5c0b0", "#C0392B"))(100)
+    fill_fn    <- function(v) {
+      idx <- pmax(1, pmin(100, round((pmax(v - 0.05, 0) / 0.15) * 80) + 1))
+      fill_scale[idx]
+    }
+
+    p <- ggplot() +
+      # Outer zones first (drawn behind inner grid)
+      geom_rect(data = outer_cells,
+                aes(xmin=xmin, xmax=xmax, ymin=ymin, ymax=ymax),
+                fill = fill_fn(outer_cells$pct_val),
+                color = "black", linewidth = 1.2) +
+      geom_text(data = outer_cells,
+                aes(x=lx, y=ly, label=pct_lab, color=txt_col),
+                size = 4, fontface = "bold") +
+      # Inner grid on top
+      geom_rect(data = inner_cells,
+                aes(xmin=xmin, xmax=xmax, ymin=ymin, ymax=ymax),
+                fill = fill_fn(inner_cells$pct_val),
+                color = "black", linewidth = 1.2) +
+      geom_text(data = inner_cells,
+                aes(x=lx, y=ly, label=pct_lab, color=txt_col),
+                size = 4, fontface = "bold") +
+      scale_color_identity() +
+      coord_fixed(xlim = c(-2.5, 2.5), ylim = c(-2.5, 2.5), expand = FALSE) +
+      labs(title    = "Zone Profile",
+           subtitle = "Catcher's-eye view — looking out toward the pitcher",
+           x = NULL, y = NULL,
+           caption  = "Zone from Catcher's Perspective") +
+      theme_seagulls() +
+      theme(axis.text  = element_blank(), axis.ticks = element_blank(),
+            panel.grid = element_blank(),
+            plot.title = element_text(face = "bold", size = 13,
+                                      color = "#0a1628", margin = margin(b = 6)))
+
+    ggplotly(p, tooltip = character(0)) %>%
+      layout(
+        yaxis         = list(scaleanchor = "x", scaleratio = 1,
+                             range = c(-2.6, 2.6), visible = FALSE),
+        xaxis         = list(range = c(-2.6, 2.6), visible = FALSE),
+        margin        = list(t = 40, b = 40, l = 20, r = 20),
+        paper_bgcolor = "white",
+        plot_bgcolor  = "white"
+      ) %>%
+      config(displayModeBar = FALSE) %>%
+      style(hoverinfo = "none")
+  })
+
+  output$player_pitch_summary_tbl <- DT::renderDT({
+    req(user_role() == "player")
+    req(user_player_type() %in% c("pitcher", "two-way"))
+    req(nrow(player_fdata()) > 0)
+
+    total <- nrow(player_fdata())
+    d <- player_fdata() %>%
+      group_by(Pitch = PitchCategory) %>%
+      summarise(
+        `Usage%`   = scales::percent(n() / total, accuracy = 1),
+        `Avg Velo` = round(mean(RelSpeed,          na.rm = TRUE), 1),
+        `Max Velo` = round(max(RelSpeed,           na.rm = TRUE), 1),
+        `Avg Spin` = round(mean(SpinRate,          na.rm = TRUE), 0),
+        `Avg IVB`  = round(mean(InducedVertBreak,  na.rm = TRUE), 1),
+        `Avg HB`   = round(mean(HorzBreak,         na.rm = TRUE), 1),
+        `Whiff%`   = whiff_pct(PitchCall),
+        .groups    = "drop"
+      ) %>%
+      arrange(desc(as.numeric(sub("%", "", `Usage%`))))
+
+    d <- d %>%
+      mutate(Pitch = paste0(
+        '<span style="display:inline-block;width:10px;height:10px;border-radius:50%;',
+        'vertical-align:middle;margin-right:7px;background:',
+        vapply(as.character(Pitch), function(x) {
+          col <- PITCH_CATEGORY_COLORS[[x]]
+          if (is.null(col) || is.na(col)) "#AAAAAA" else col
+        }, character(1)),
+        ';"></span>', Pitch
+      ))
+
+    DT::datatable(d, rownames = FALSE, escape = FALSE,
+      options = list(pageLength = 15, dom = "t", ordering = TRUE),
+      class   = "compact stripe"
+    ) %>%
+      DT::formatRound(c("Avg Velo", "Max Velo", "Avg IVB", "Avg HB"), digits = 1) %>%
+      DT::formatRound("Avg Spin", digits = 0, mark = ",") %>%
+      DT::formatPercentage("Whiff%", digits = 1) %>%
+      DT::formatStyle(columns = names(d), textAlign = "right")
   })
 
   output$player_movement <- renderPlotly({
+    req(nrow(player_fdata()) > 0)
     d <- player_fdata() %>%
-      filter(!is.na(HorzBreak), !is.na(InducedVertBreak))
-    req(nrow(d) > 0)
+      group_by(PitchCategory) %>%
+      summarise(
+        HorzBreak        = mean(HorzBreak,        na.rm = TRUE),
+        InducedVertBreak = mean(InducedVertBreak, na.rm = TRUE),
+        n                = n(),
+        .groups          = "drop"
+      )
     rings <- bind_rows(lapply(c(6, 12, 18), ring_df))
-    p <- ggplot(d, aes(x = HorzBreak, y = InducedVertBreak,
-        color = TaggedPitchType,
-        text = paste0(TaggedPitchType, "<br>IVB: ", round(InducedVertBreak, 1),
-                      " in<br>HB: ", round(HorzBreak, 1), " in")
+    p <- ggplot(d, aes(
+        x = HorzBreak, y = InducedVertBreak,
+        color = PitchCategory, size = n,
+        label = PitchCategory
       )) +
       geom_path(data = rings, aes(x = x, y = y, group = r),
-                inherit.aes = FALSE, color = "#E2E8F0", linewidth = 0.4) +
-      geom_hline(yintercept = 0, color = "#CBD5E1", linewidth = 0.4) +
-      geom_vline(xintercept = 0, color = "#CBD5E1", linewidth = 0.4) +
-      geom_point(alpha = 0.7, size = 2.5) +
-      scale_color_manual(values = PITCH_COLORS, drop = TRUE) +
-      coord_fixed(xlim = c(-24, 24), ylim = c(-24, 24)) +
-      labs(title = "Movement Profile",
-           subtitle = "Pitcher's-hand view — rings at 6\", 12\", 18\"",
-           x = "Horizontal Break (in)", y = "Induced Vert Break (in)",
-           color = NULL) +
+                color = "#D1D5DB", linetype = "dashed", linewidth = 0.4,
+                inherit.aes = FALSE) +
+      geom_hline(yintercept = 0, color = "#CBD5E1", linewidth = 0.5) +
+      geom_vline(xintercept = 0, color = "#CBD5E1", linewidth = 0.5) +
+      geom_point(alpha = 0.85) +
+      geom_text(aes(label = PitchCategory),
+                size = 3.2, hjust = -0.2, vjust = 0.5,
+                show.legend = FALSE) +
+      scale_color_manual(values = PITCH_CATEGORY_COLORS) +
+      scale_size_continuous(range = c(4, 12)) +
+      coord_fixed() +
+      labs(
+        title    = "Movement Profile",
+        subtitle = "Pitcher's-eye view — like the TV camera behind the mound",
+        x = "Horizontal Break (in)", y = "Induced Vert Break (in)",
+        color = NULL, size = "Pitches"
+      ) +
       theme_seagulls() +
-      theme(panel.grid = element_blank())
-    plotly_clean(ggplotly(p, tooltip = "text"))
+      theme(legend.position = if (n_distinct(d$PitchCategory) <= 1) "none" else "right")
+    plotly_clean(ggplotly(p, tooltip = c("label", "x", "y", "size")))
+  })
+
+  # ── Player: pitcher pitch log ─────────────────────────────────────────────
+  output$player_pitch_log <- DT::renderDT({
+    req(user_role() == "player")
+    d <- player_fdata()
+    req(nrow(d) > 0)
+    d %>%
+      arrange(Inning, PAofInning, PitchofPA) %>%
+      transmute(
+        Inn    = Inning,
+        Batter,
+        Count,
+        Type   = TaggedPitchType,
+        `Velo` = round(RelSpeed, 1),
+        Result = format_pitch_result(PitchCall, PlayResult)
+      ) %>%
+      DT::datatable(
+        rownames = FALSE,
+        options  = list(pageLength = 15, dom = "tip", scrollX = TRUE,
+                        columnDefs = list(list(className = "dt-center", targets = "_all"))),
+        class    = "table-sm table-striped"
+      )
   })
 
   # ── Player: hitter section ────────────────────────────────────────────────
@@ -1171,121 +2011,262 @@ server <- function(input, output, session) {
       chase_base      <- NA_real_
     }
 
-    # Takeaway sentence
-    first_clause <- if (!is.na(hh) && hh >= 0.40) {
-      paste0("You were hitting the ball hard — ", fmt_pct(hh), " hard contact rate")
-    } else if (!is.na(avg_ev) && avg_ev >= 92) {
-      paste0("Strong exit velocity at ", fmt_ev(avg_ev))
-    } else if (!is.na(hh)) {
-      paste0("Hard Hit% was ", fmt_pct(hh), " this game")
-    } else {
-      "Limited ball-in-play data for this game"
-    }
-
-    second_clause <- if (!is.na(chase)) {
-      if (chase <= 0.25)
-        paste0(" — good pitch recognition (", fmt_pct(chase), " chase rate).")
-      else
-        paste0(" — pitches outside the zone drew ", fmt_pct(chase), " of your swings.")
-    } else "."
-
     tagList(
       tags$h6("Hitting", style = "color:#0a1628; font-weight:600; margin:12px 0 8px;"),
-      div(
-        style = "background:#f0fafb; border-left:3px solid #2A9D8F; padding:10px 14px;
-                 border-radius:4px; margin-bottom:12px; font-size:13px; color:#0a1628;",
-        paste0(first_clause, second_clause)
-      ),
       layout_columns(
         col_widths = breakpoints(sm = 6, md = 3),
-        stat_tile("Avg Exit Velo", fmt_ev(avg_ev),     tile_class(avg_ev,     92,   82),
+        stat_tile(tagList("Avg EV", metric_badge(avg_ev, 92, 82)),
+                  fmt_ev(avg_ev), tile_class(avg_ev, 92, 82),
                   trend        = mk_trend_ev(avg_ev, avg_ev_base),
-                  tooltip_text = "How hard you hit the ball on average — 95+ mph is considered hard contact."),
-        stat_tile("Hard Hit%",     fmt_pct(hh),         tile_class(hh,         0.40, 0.25),
+                  tooltip_text = "Average exit velocity on contact. MLB average ~88 mph; 92+ is above average."),
+        stat_tile(tagList("Hard Hit%", metric_badge(hh, 0.40, 0.25)),
+                  fmt_pct(hh), tile_class(hh, 0.40, 0.25),
                   trend        = mk_trend(hh, hh_base),
-                  tooltip_text = "Share of your batted balls hit at 95 mph or harder."),
-        stat_tile("Zone Swing%",   fmt_pct(swing_zone), tile_class(swing_zone, 0.70, 0.00),
+                  tooltip_text = "Share of batted balls at 95+ mph. MLB average ~38%; 40%+ is elite."),
+        stat_tile(tagList("Zone Swing%", metric_badge(swing_zone, 0.70, 0.00)),
+                  fmt_pct(swing_zone), tile_class(swing_zone, 0.70, 0.00),
                   trend        = mk_trend(swing_zone, swing_zone_base),
                   tooltip_text = "How often you swung at pitches inside the strike zone — attacking hittable pitches."),
-        stat_tile("Chase%",        fmt_pct(chase),      tile_class(chase, 0.25, 0.35, hi_good = FALSE),
+        stat_tile(tagList("Chase%", metric_badge(chase, 0.25, 0.35, hi_good = FALSE)),
+                  fmt_pct(chase), tile_class(chase, 0.25, 0.35, hi_good = FALSE),
                   trend        = mk_trend(chase, chase_base),
-                  tooltip_text = "How often you swung at pitches outside the strike zone — lower means better pitch recognition.")
+                  tooltip_text = "Chase rate — how often you swung at pitches outside the zone. MLB avg ~30%; lower is better.")
       ),
       layout_columns(
         col_widths = breakpoints(sm = 12, md = 6),
         plotlyOutput("player_spray",       height = "360px"),
         plotlyOutput("player_swing_zones", height = "360px")
-      )
+      ),
+      tags$h5("Pitch Log",
+              style = "font-weight:700; color:#0a1628; font-size:15px; margin:16px 0 8px 4px; letter-spacing:0.2px;"),
+      DTOutput("player_hit_log")
     )
   })
 
   output$player_spray <- renderPlotly({
+    req(nrow(player_fdata()) > 0)
+
     d <- player_fdata() %>%
-      filter(!is.na(Direction), !is.na(Distance),
-             PlayResult %in% c("Single","Double","Triple","HomeRun","Out")) %>%
+      filter(PlayResult %in% c("Single","Double","Triple","HomeRun","Out"),
+             !is.na(Direction), !is.na(Distance)) %>%
       mutate(
         spray_x = Distance * sin(Direction * pi / 180),
-        spray_y = Distance * cos(Direction * pi / 180),
-        ev_label = ifelse(is.na(ExitSpeed), "",
-                          paste0("<br>EV: ", round(ExitSpeed, 1), " mph"))
+        spray_y = Distance * cos(Direction * pi / 180)
       )
     req(nrow(d) > 0)
-    hit_colors <- c(Single = "#2DC653", Double = "#F5C518",
-                    Triple = "#FF8C00", HomeRun = "#E63946", Out = "#AAAAAA")
+
+    result_colors <- c(Single = "#2DC653", Double = "#F5C518",
+                       Triple = "#FF8C00", HomeRun = "#E63946", Out = "#AAAAAA")
+    active <- player_spray_click_filter()
+
+    d <- d %>% mutate(
+      alpha_val = if (is.null(active)) 0.75
+                  else ifelse(PlayResult == active, 0.95, 0.12),
+      size_val  = if (is.null(active)) 6
+                  else ifelse(PlayResult == active, 8, 4)
+    )
+
     outline <- field_outline_df()
-    p <- ggplot(d, aes(x = spray_x, y = spray_y, color = PlayResult,
-        text = paste0(PlayResult, "<br>", round(Distance, 0), " ft", ev_label))) +
-      geom_path(data = outline, aes(x = x, y = y), inherit.aes = FALSE,
-                color = "gray70", linewidth = 0.5) +
-      geom_point(alpha = 0.8, size = 3) +
-      scale_color_manual(values = hit_colors) +
-      coord_fixed(xlim = c(-350, 350), ylim = c(0, 430)) +
-      labs(title = "Where the Ball Was Hit", x = NULL, y = NULL, color = NULL) +
-      theme_seagulls() +
-      theme(axis.text = element_blank(), panel.grid = element_blank())
-    plotly_clean(ggplotly(p, tooltip = "text"))
-  })
 
-  output$player_swing_zones <- renderPlotly({
-    d <- player_fdata()
-    req(nrow(d) > 0)
-    ds <- d %>%
-      filter(!is.na(PlateLocSide), !is.na(PlateLocHeight)) %>%
-      mutate(
-        zone  = classify_zone13(PlateLocSide, PlateLocHeight),
-        swing = PitchCall %in% c("StrikeSwinging","FoulBallNotFieldable",
-                                  "FoulBallFieldable","InPlay")
-      ) %>%
-      filter(!is.na(zone)) %>%
-      group_by(zone) %>%
-      summarise(swing_pct = mean(swing), n = n(), .groups = "drop") %>%
-      tidyr::complete(zone = ZONE13_COORDS$zone) %>%
-      right_join(ZONE13_COORDS, by = "zone")
+    title_txt <- if (!is.null(active))
+      paste0("Batted Ball Chart — ", active,
+             "s only  <i>(click again or double-click to clear)</i>")
+    else
+      "Batted Ball Chart  <i>(click a dot to filter by result type)</i>"
 
-    p <- ggplot(ds, aes(x = x, y = y, fill = swing_pct,
-        label = if_else(is.na(swing_pct), "—",
-                        scales::percent(swing_pct, accuracy = 1)))) +
-      geom_tile(width = 0.95, height = 0.95, color = "white", linewidth = 1) +
-      geom_text(fontface = "bold", size = 3.5,
-                color = ifelse(is.na(ds$swing_pct), "#999999", "#0a1628")) +
-      annotate("rect", xmin = -1.5, xmax = 1.5, ymin = -0.5, ymax = 2.5,
-               fill = NA, color = "black", linewidth = 1) +
-      scale_fill_gradient2(low = "#457B9D", mid = "#f3f3f3", high = "#E63946",
-        midpoint = 0.5, na.value = "#f3f3f3",
-        labels = scales::percent_format(), name = "Swing%") +
-      coord_fixed() +
-      labs(title = "Swing Rates by Zone",
-           subtitle = "Catcher's-eye view — includes chase zones",
-           x = NULL, y = NULL) +
-      theme_seagulls() + theme(axis.text = element_blank(), panel.grid = element_blank())
-    ggplotly(p, tooltip = "label") %>%
-      layout(
-        yaxis         = list(scaleanchor = "x", scaleratio = 1),
-        paper_bgcolor = "white", plot_bgcolor = "white",
-        font = list(color = "#1A202C")
-      ) %>%
+    p <- plot_ly(source = "player_spray_chart") %>%
+      add_trace(
+        data = outline, type = "scatter", mode = "lines",
+        x = ~x, y = ~y,
+        line = list(color = "gray70", width = 1.5),
+        hoverinfo = "none", showlegend = FALSE
+      )
+
+    for (result in c("HomeRun","Triple","Double","Single","Out")) {
+      sub <- d %>% filter(PlayResult == result)
+      if (nrow(sub) == 0) next
+      p <- p %>% add_trace(
+        data       = sub,
+        type       = "scatter", mode = "markers",
+        x          = ~spray_x, y = ~spray_y,
+        name       = result,
+        customdata = ~PlayResult,
+        marker     = list(
+          color   = result_colors[result],
+          size    = sub$size_val,
+          opacity = sub$alpha_val,
+          line    = list(width = 0)
+        ),
+        text = ~paste0(PlayResult,
+                       "<br>EV: ", ifelse(is.na(ExitSpeed), "—",
+                                          paste0(round(ExitSpeed, 1), " mph")),
+                       "<br>Dist: ", ifelse(is.na(Distance), "—",
+                                            paste0(round(Distance), " ft"))),
+        hoverinfo = "text"
+      )
+    }
+
+    p %>% layout(
+      title         = list(text = title_txt, font = list(size = 13), x = 0),
+      xaxis         = list(visible = FALSE, range = c(-350, 350)),
+      yaxis         = list(visible = FALSE, range = c(-30, 430),
+                           scaleanchor = "x", scaleratio = 1),
+      showlegend    = TRUE,
+      legend        = list(orientation = "v"),
+      paper_bgcolor = "white", plot_bgcolor = "white"
+    ) %>%
       config(displayModeBar = FALSE)
   })
 
+  output$player_swing_zones <- renderPlotly({
+    req(nrow(player_fdata()) > 0)
+
+    zw <- (SZ_RIGHT - SZ_LEFT) / 3
+    zh <- (SZ_TOP   - SZ_BOT)  / 3
+
+    d_raw <- player_fdata() %>%
+      filter(!is.na(PlateLocSide), !is.na(PlateLocHeight)) %>%
+      mutate(
+        in_col = cut(PlateLocSide,
+          breaks = c(SZ_LEFT, SZ_LEFT+zw, SZ_LEFT+2*zw, SZ_RIGHT),
+          labels = c("L","M","R"), include.lowest = TRUE),
+        in_row = cut(PlateLocHeight,
+          breaks = c(SZ_BOT, SZ_BOT+zh, SZ_BOT+2*zh, SZ_TOP),
+          labels = c("Low","Mid","High"), include.lowest = TRUE),
+        in_zone   = !is.na(in_col) & !is.na(in_row),
+        near_zone = PlateLocSide  >= SZ_LEFT - zw &
+                    PlateLocSide  <= SZ_RIGHT + zw &
+                    PlateLocHeight >= SZ_BOT - zh &
+                    PlateLocHeight <= SZ_TOP + zh,
+        swing = PitchCall %in% c("StrikeSwinging","FoulBallNotFieldable",
+                                  "FoulBallFieldable","InPlay"),
+        zone = case_when(
+          in_zone & in_col=="L" & in_row=="High" ~ "1",
+          in_zone & in_col=="M" & in_row=="High" ~ "2",
+          in_zone & in_col=="R" & in_row=="High" ~ "3",
+          in_zone & in_col=="L" & in_row=="Mid"  ~ "4",
+          in_zone & in_col=="M" & in_row=="Mid"  ~ "5",
+          in_zone & in_col=="R" & in_row=="Mid"  ~ "6",
+          in_zone & in_col=="L" & in_row=="Low"  ~ "7",
+          in_zone & in_col=="M" & in_row=="Low"  ~ "8",
+          in_zone & in_col=="R" & in_row=="Low"  ~ "9",
+          !in_zone & near_zone & PlateLocSide <  0 & PlateLocHeight >= (SZ_BOT+SZ_TOP)/2 ~ "11",
+          !in_zone & near_zone & PlateLocSide >= 0 & PlateLocHeight >= (SZ_BOT+SZ_TOP)/2 ~ "12",
+          !in_zone & near_zone & PlateLocSide <  0 & PlateLocHeight <  (SZ_BOT+SZ_TOP)/2 ~ "13",
+          !in_zone & near_zone & PlateLocSide >= 0 & PlateLocHeight <  (SZ_BOT+SZ_TOP)/2 ~ "14",
+          TRUE ~ NA_character_
+        )
+      ) %>%
+      filter(!is.na(zone)) %>%
+      group_by(zone) %>%
+      summarise(pct_val = mean(swing), n = n(), .groups = "drop")
+
+    all_zones <- tibble(zone = as.character(c(1:9, 11:14)))
+    d_raw <- left_join(all_zones, d_raw, by = "zone") %>%
+      mutate(pct_val = replace_na(pct_val, 0), n = replace_na(n, 0L))
+
+    pct_lookup <- setNames(d_raw$pct_val, d_raw$zone)
+
+    outer_cells <- tribble(
+      ~zone, ~xmin, ~xmax, ~ymin, ~ymax, ~lx,  ~ly,
+      "11", -2.5,   0.0,   0.0,   2.5,  -2.0,  2.0,
+      "12",  0.0,   2.5,   0.0,   2.5,   2.0,  2.0,
+      "13", -2.5,   0.0,  -2.5,   0.0,  -2.0, -2.0,
+      "14",  0.0,   2.5,  -2.5,   0.0,   2.0, -2.0
+    )
+
+    inner_cells <- tribble(
+      ~zone, ~xmin, ~xmax, ~ymin, ~ymax, ~lx,  ~ly,
+      "1",  -1.5,  -0.5,   0.5,   1.5,  -1.0,  1.0,
+      "2",  -0.5,   0.5,   0.5,   1.5,   0.0,  1.0,
+      "3",   0.5,   1.5,   0.5,   1.5,   1.0,  1.0,
+      "4",  -1.5,  -0.5,  -0.5,   0.5,  -1.0,  0.0,
+      "5",  -0.5,   0.5,  -0.5,   0.5,   0.0,  0.0,
+      "6",   0.5,   1.5,  -0.5,   0.5,   1.0,  0.0,
+      "7",  -1.5,  -0.5,  -1.5,  -0.5,  -1.0, -1.0,
+      "8",  -0.5,   0.5,  -1.5,  -0.5,   0.0, -1.0,
+      "9",   0.5,   1.5,  -1.5,  -0.5,   1.0, -1.0
+    )
+
+    add_pct <- function(df) {
+      df %>% mutate(
+        pct_val = pct_lookup[zone],
+        pct_lab = if_else(is.na(pct_val) | pct_val == 0, "—",
+                          paste0(round(pct_val * 100), "%")),
+        txt_col = ifelse(!is.na(pct_val) & pct_val >= 0.55, "white", "#1a1a2e")
+      )
+    }
+
+    outer_cells <- add_pct(outer_cells)
+    inner_cells <- add_pct(inner_cells)
+
+    fill_scale <- colorRampPalette(c("#ffffff", "#f5c0b0", "#C0392B"))(100)
+    fill_fn    <- function(v) {
+      idx <- pmax(1, pmin(100, round((pmax(v - 0.20, 0) / 0.60) * 99) + 1))
+      fill_scale[idx]
+    }
+
+    p <- ggplot() +
+      geom_rect(data = outer_cells,
+                aes(xmin=xmin, xmax=xmax, ymin=ymin, ymax=ymax),
+                fill = fill_fn(outer_cells$pct_val),
+                color = "black", linewidth = 1.2) +
+      geom_text(data = outer_cells,
+                aes(x=lx, y=ly, label=pct_lab, color=txt_col),
+                size = 4, fontface = "bold") +
+      geom_rect(data = inner_cells,
+                aes(xmin=xmin, xmax=xmax, ymin=ymin, ymax=ymax),
+                fill = fill_fn(inner_cells$pct_val),
+                color = "black", linewidth = 1.2) +
+      geom_text(data = inner_cells,
+                aes(x=lx, y=ly, label=pct_lab, color=txt_col),
+                size = 4, fontface = "bold") +
+      scale_color_identity() +
+      coord_fixed(xlim = c(-2.5, 2.5), ylim = c(-2.5, 2.5), expand = FALSE) +
+      labs(title    = "Swing Rates by Zone",
+           subtitle = "Catcher's-eye view — looking out toward the pitcher",
+           x = NULL, y = NULL,
+           caption  = "Zone from Catcher's Perspective") +
+      theme_seagulls() +
+      theme(axis.text = element_blank(), axis.ticks = element_blank(),
+            panel.grid = element_blank())
+
+    ggplotly(p, tooltip = character(0)) %>%
+      layout(
+        yaxis         = list(scaleanchor = "x", scaleratio = 1,
+                             range = c(-2.6, 2.6), visible = FALSE),
+        xaxis         = list(range = c(-2.6, 2.6), visible = FALSE),
+        margin        = list(t = 40, b = 40, l = 20, r = 20),
+        paper_bgcolor = "white",
+        plot_bgcolor  = "white"
+      ) %>%
+      config(displayModeBar = FALSE) %>%
+      style(hoverinfo = "none")
+  })
+
+  # ── Player: hitter pitch log ───────────────────────────────────────────────
+  output$player_hit_log <- DT::renderDT({
+    req(user_role() == "player")
+    d <- player_fdata()
+    req(nrow(d) > 0)
+    d %>%
+      arrange(Inning, PAofInning, PitchofPA) %>%
+      transmute(
+        Inn     = Inning,
+        Pitcher,
+        Count,
+        Type    = TaggedPitchType,
+        Velo    = round(RelSpeed, 1),
+        `EV`    = ifelse(PitchCall == "InPlay" & !is.na(ExitSpeed),
+                         paste0(round(ExitSpeed, 1), " mph"), "—"),
+        Result  = format_pitch_result(PitchCall, PlayResult)
+      ) %>%
+      DT::datatable(
+        rownames = FALSE,
+        options  = list(pageLength = 15, dom = "tip", scrollX = TRUE,
+                        columnDefs = list(list(className = "dt-center", targets = "_all"))),
+        class    = "table-sm table-striped"
+      )
+  })
 
 }
