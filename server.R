@@ -15,6 +15,7 @@ stat_tile <- function(label, value_str, css_class = "tile-neutral", trend = NULL
                       tooltip_text = NULL) {
   div(
     class = "value-tile",
+    title = tooltip_text,
     div(class = "tile-label", label),
     div(class = paste("tile-value", css_class), value_str),
     if (!is.null(trend)) trend
@@ -1099,136 +1100,7 @@ server <- function(input, output, session) {
 
   # ── Sync status display ────────────────────────────────────────────────────
   output$sync_status <- renderUI({ NULL })
-
-  # ── Google Drive sync handler ──────────────────────────────────────────────
-  observeEvent(input$sync_data, {
-    req(user_role() == "coach")
-
-    folder_id <- Sys.getenv("SEAGULLS_DRIVE_FOLDER_ID")
-    if (nchar(folder_id) == 0) {
-      output$sync_status <- renderUI({
-        tags$small(
-          "Set SEAGULLS_DRIVE_FOLDER_ID in .Renviron and restart the app.",
-          style = "color:#F4A261; font-size:11px; display:block; margin-top:4px;"
-        )
-      })
-      return()
-    }
-
-    output$sync_status <- renderUI({
-      tags$small("Syncing…",
-                 style = "color:#555; font-size:11px; display:block; margin-top:4px;")
-    })
-
-    tryCatch({
-      n_new  <- sync_from_drive(folder_id)
-      n_rows <- build_combined_csv()
-
-      new_data <- readr::read_csv("all_fall_25.csv", show_col_types = FALSE)
-      new_data$TaggedPitchType <- dplyr::if_else(
-        new_data$TaggedPitchType %in% c("Other", NA_character_),
-        "Undefined", new_data$TaggedPitchType
-      )
-      new_data$Count        <- paste0(new_data$Balls, "-", new_data$Strikes)
-      new_data$PitchCategory <- PITCH_CATEGORY_MAP[new_data$TaggedPitchType]
-      new_data$PitchCategory[is.na(new_data$PitchCategory)] <- "Undefined"
-      new_data$PitchCategory <- factor(new_data$PitchCategory,
-        levels = c("Fastball", "Breaking Ball", "Offspeed", "Undefined"))
-      new_data$Season <- "Fall 2025"
-      app_data(new_data)
-
-      if (is.null(input$main_tabs) || input$main_tabs == "Pitching") {
-        updatePickerInput(session, "player",
-          choices  = c("All Players", sort(unique(new_data$Pitcher))),
-          selected = "All Players"
-        )
-      } else {
-        updatePickerInput(session, "player",
-          choices  = c("All Players", sort(unique(new_data$Batter))),
-          selected = "All Players"
-        )
-      }
-
-      output$sync_status <- renderUI({
-        tags$small(
-          paste0("✓ ", n_new, " new file(s) — ",
-                 format(n_rows, big.mark = ","), " pitches loaded"),
-          style = "color:#2A9D8F; font-size:11px; display:block; margin-top:4px;"
-        )
-      })
-    }, error = function(e) {
-      output$sync_status <- renderUI({
-        tags$small(
-          paste0("Error: ", conditionMessage(e)),
-          style = "color:#E63946; font-size:11px; display:block; margin-top:4px;
-                  word-break:break-word;"
-        )
-      })
-    })
-  })
-
-  # ── Coach: Pitching glance row ─────────────────────────────────────────────
-  output$coach_pitch_glance <- renderUI({
-    req(nrow(fdata()) > 0)
-    d    <- fdata()
-    spct <- strike_pct(d$PitchCall)
-    wpct <- whiff_pct(d$PitchCall)
-    cswp <- csw_pct(d$PitchCall)
-    gbp  <- gb_pct(d$TaggedHitType)
-    fmt  <- function(x) if (is.na(x)) "—" else scales::percent(x, accuracy = 1)
-
-    tagList(
-      div(
-        style = "padding:12px 0 8px;",
-        layout_columns(
-          col_widths = breakpoints(sm = 6, md = 3),
-          stat_tile("Strike%", fmt(spct), tile_class(spct, 0.65, 0.54)),
-          stat_tile("Whiff%",  fmt(wpct), tile_class(wpct, 0.30, 0.19)),
-          stat_tile("CSW%",    fmt(cswp), tile_class(cswp, 0.28, 0.20)),
-          stat_tile("GB%",     fmt(gbp),  tile_class(gbp,  0.45, 0.30))
-        )
-      )
-    )
-  })
-
-  # ── Coach: Hitting glance row ──────────────────────────────────────────────
-  output$coach_hit_glance <- renderUI({
-    req(nrow(fdata()) > 0)
-    d    <- fdata()
-    d_ip <- d %>% filter(PitchCall == "InPlay", !is.na(ExitSpeed))
-    avg_ev <- mean(d_ip$ExitSpeed, na.rm = TRUE)
-    hh     <- hard_hit_pct(d_ip$ExitSpeed)
-    brl    <- barrel_pct(d_ip$ExitSpeed, d_ip$Angle)
-
-    team_avgs <- d %>%
-      group_by(Batter) %>%
-      summarise(
-        PA = n_distinct(paste(Date, Inning, PAofInning)),
-        H  = sum(PlayResult %in% c("Single","Double","Triple","HomeRun"), na.rm = TRUE),
-        BB = sum(KorBB == "Walk", na.rm = TRUE),
-        .groups = "drop"
-      ) %>%
-      summarise(total_H = sum(H), total_AB = sum(PA - BB))
-    tavg <- if (team_avgs$total_AB > 0) team_avgs$total_H / team_avgs$total_AB else NA_real_
-
-    fmt_ev  <- function(x) if (is.na(x)) "—" else paste0(round(x, 1), " mph")
-    fmt_pct <- function(x) if (is.na(x)) "—" else scales::percent(x, accuracy = 1)
-    fmt_avg <- function(x) if (is.na(x)) "—" else formatC(x, digits = 3, format = "f")
-
-    div(
-      style = "padding:12px 0 8px;",
-      layout_columns(
-        col_widths = breakpoints(sm = 6, md = 3),
-        stat_tile("AVG",       fmt_avg(tavg),  tile_class(tavg,   0.300, 0.230)),
-        stat_tile("Hard Hit%", fmt_pct(hh),    tile_class(hh,     0.40,  0.25)),
-        stat_tile("Barrel%",   fmt_pct(brl),   tile_class(brl,    0.08,  0.04)),
-        stat_tile("Avg EV",    fmt_ev(avg_ev), tile_class(avg_ev, 92,    82))
-      )
-    )
-  })
-
-  # ── Sync status display ────────────────────────────────────────────────────
-  output$sync_status <- renderUI({ NULL })
+  output$insights    <- renderUI({ NULL })
 
   # ── Google Drive sync handler ──────────────────────────────────────────────
   observeEvent(input$sync_data, {
