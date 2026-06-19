@@ -18,6 +18,6 @@ shinymanager::create_db(
 )
 
 message("credentials.sqlite created with ", nrow(credentials), " users")
+message("Staff: coach / analytics — password is '2026'")
 message("Players: jersey number is initial password (e.g. '12' for #12)")
-message("Coaches: initial password is 'seagulls2026'")
 message("All users can change their password via the login screen.")
