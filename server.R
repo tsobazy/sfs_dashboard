@@ -1304,14 +1304,14 @@ server <- function(input, output, session) {
       pull(Date) %>% unique() %>% sort(decreasing = TRUE)
 
     switch(input$player_game_window,
-      "Full Season"  = all_dates,
-      "Custom"       = as.Date(input$player_custom_games),
-      "Last 10"      = head(all_dates, 10L),
+      "This Game" = selected_game(),
+      "Season"    = all_dates,
       head(all_dates, 5L)   # "Last 5" default
     )
   })
 
   player_fdata <- reactive({
+    req(!is.null(input$player_pitch_cats), length(input$player_pitch_cats) > 0)
     date_col <- if (user_player_type() == "pitcher") "Pitcher" else "Batter"
     count_filter <- switch(input$player_count,
       "All"             = NULL,
@@ -1338,10 +1338,40 @@ server <- function(input, output, session) {
     d
   })
 
+  # ── Player: game navigator UI ────────────────────────────────────────────
+  output$player_game_nav <- renderUI({
+    if (is.null(input$player_game_window) || input$player_game_window != "This Game")
+      return(NULL)
+    g <- player_games()
+    if (length(g) == 0)
+      return(div("No games recorded yet.",
+                 style = "color:#888; font-size:12px; padding:6px 0;"))
+    idx      <- game_index()
+    date_str <- tryCatch(format(selected_game(), "%b %d, %Y"), error = function(e) "—")
+    at_start <- idx >= length(g)
+    at_end   <- idx <= 1L
+    div(
+      style = "margin-top:6px; padding:8px 10px; background:#f8f9fc;
+               border-radius:8px; border:1px solid #e2e8f0;",
+      tags$p(date_str,
+             style = "color:#1a202c; font-size:13px; font-weight:600;
+                      text-align:center; margin:0 0 2px;"),
+      tags$p(paste0("Game ", length(g) - idx + 1L, " of ", length(g)),
+             style = "color:#64748b; font-size:11px; text-align:center; margin:0 0 8px;"),
+      div(style = "display:flex; gap:6px;",
+          actionButton("prev_game", "← Prev",
+                       style = paste0("flex:1; font-size:11px; padding:3px 0;",
+                                      if (at_start) " opacity:0.4;" else "")),
+          actionButton("next_game", "Next →",
+                       style = paste0("flex:1; font-size:11px; padding:3px 0;",
+                                      if (at_end) " opacity:0.4;" else "")))
+    )
+  })
+
   # ── Player spray click filter ─────────────────────────────────────────────
   player_spray_click_filter <- reactiveVal(NULL)
 
-  observeEvent(list(input$player_game_window), {
+  observeEvent(list(input$player_game_window, game_index()), {
     player_spray_click_filter(NULL)
   })
 
@@ -1457,17 +1487,9 @@ server <- function(input, output, session) {
 
               tags$label("Games", style = "font-weight:600; font-size:12px; margin-top:8px; display:block;"),
               radioGroupButtons("player_game_window", label = NULL,
-                choices  = c("Last 5", "Last 10", "Full Season", "Custom"),
-                selected = "Last 5", size = "sm", justified = TRUE),
-
-              conditionalPanel(
-                condition = "input.player_game_window == 'Custom'",
-                pickerInput("player_custom_games", label = NULL,
-                  choices  = as.character(game_dates),
-                  selected = as.character(head(game_dates, 5)),
-                  multiple = TRUE,
-                  options  = list(`actions-box` = TRUE, title = "Select games"))
-              ),
+                choices  = c("This Game", "Last 5", "Season"),
+                selected = "This Game", size = "sm", justified = TRUE),
+              uiOutput("player_game_nav"),
 
               hr(),
 
@@ -1546,38 +1568,46 @@ server <- function(input, output, session) {
                                            d_rec$PlateLocHeight,
                                            d_rec$PitchCall)   else NA_real_
 
-    tagList(
-      tags$h6("Pitching", style = "color:#0a1628; font-weight:600; margin:12px 0 8px;"),
-      layout_columns(
-        col_widths = breakpoints(sm = 6, md = 3),
-        stat_tile(tagList("Strike%", metric_badge(spct, 0.65, 0.54)),
-                  fmt(spct), tile_class(spct, 0.65, 0.54),
-                  trend        = mk_trend(spct, spct_base),
-                  tooltip_text = "Strikes, swings, and balls in play as a share of all pitches."),
-        stat_tile(tagList("Whiff%", metric_badge(wpct, 0.30, 0.19)),
-                  fmt(wpct), tile_class(wpct, 0.30, 0.19),
-                  trend        = mk_trend(wpct, wpct_base),
-                  tooltip_text = "Share of swings that completely missed — elite starters average ~26%."),
-        stat_tile(tagList("CSW%", metric_badge(cswp, 0.28, 0.20)),
-                  fmt(cswp), tile_class(cswp, 0.28, 0.20),
-                  trend        = mk_trend(cswp, cswp_base),
-                  tooltip_text = "Called Strikes + Whiffs per pitch — the best single-pitch quality metric."),
-        stat_tile(tagList("Chase%", metric_badge(chsp, 0.30, 0.00)),
-                  fmt(chsp), tile_class(chsp, 0.30, 0.00),
-                  trend        = mk_trend(chsp, chsp_base),
-                  tooltip_text = "How often hitters chased pitches outside the zone.")
+    tabsetPanel(
+      id = "player_pitcher_tabs",
+      tabPanel("Overview",
+        tags$h6("Pitching", style = "color:#0a1628; font-weight:600; margin:12px 0 8px;"),
+        layout_columns(
+          col_widths = breakpoints(sm = 6, md = 3),
+          stat_tile(tagList("Strike%", metric_badge(spct, 0.65, 0.54)),
+                    fmt(spct), tile_class(spct, 0.65, 0.54),
+                    trend        = mk_trend(spct, spct_base),
+                    tooltip_text = "Strikes, swings, and balls in play as a share of all pitches."),
+          stat_tile(tagList("Whiff%", metric_badge(wpct, 0.30, 0.19)),
+                    fmt(wpct), tile_class(wpct, 0.30, 0.19),
+                    trend        = mk_trend(wpct, wpct_base),
+                    tooltip_text = "Share of swings that completely missed — elite starters average ~26%."),
+          stat_tile(tagList("CSW%", metric_badge(cswp, 0.28, 0.20)),
+                    fmt(cswp), tile_class(cswp, 0.28, 0.20),
+                    trend        = mk_trend(cswp, cswp_base),
+                    tooltip_text = "Called Strikes + Whiffs per pitch — the best single-pitch quality metric."),
+          stat_tile(tagList("Chase%", metric_badge(chsp, 0.30, 0.00)),
+                    fmt(chsp), tile_class(chsp, 0.30, 0.00),
+                    trend        = mk_trend(chsp, chsp_base),
+                    tooltip_text = "How often hitters chased pitches outside the zone.")
+        ),
+        tags$h5("Pitch Arsenal Summary",
+                style = "font-weight:700; color:#0a1628; font-size:15px; margin:16px 0 8px 4px; letter-spacing:0.2px;"),
+        DT::DTOutput("player_pitch_summary_tbl"),
+        layout_columns(
+          col_widths = breakpoints(sm = 12, md = 6),
+          plotlyOutput("player_zone13",   height = "360px"),
+          plotlyOutput("player_movement", height = "360px")
+        ),
+        tags$h5("Pitch Log",
+                style = "font-weight:700; color:#0a1628; font-size:15px; margin:16px 0 8px 4px; letter-spacing:0.2px;"),
+        DTOutput("player_pitch_log")
       ),
-      tags$h5("Pitch Arsenal Summary",
-              style = "font-weight:700; color:#0a1628; font-size:15px; margin:16px 0 8px 4px; letter-spacing:0.2px;"),
-      DT::DTOutput("player_pitch_summary_tbl"),
-      layout_columns(
-        col_widths = breakpoints(sm = 12, md = 6),
-        plotlyOutput("player_zone13",    height = "360px"),
-        plotlyOutput("player_movement", height = "360px")
-      ),
-      tags$h5("Pitch Log",
-              style = "font-weight:700; color:#0a1628; font-size:15px; margin:16px 0 8px 4px; letter-spacing:0.2px;"),
-      DTOutput("player_pitch_log")
+      tabPanel("Game Log",
+        tags$h5("Game-by-Game Stats",
+                style = "font-weight:700; color:#0a1628; font-size:15px; margin:16px 0 8px 4px;"),
+        DTOutput("player_pitcher_game_log")
+      )
     )
   })
 
@@ -1883,35 +1913,43 @@ server <- function(input, output, session) {
       chase_base      <- NA_real_
     }
 
-    tagList(
-      tags$h6("Hitting", style = "color:#0a1628; font-weight:600; margin:12px 0 8px;"),
-      layout_columns(
-        col_widths = breakpoints(sm = 6, md = 3),
-        stat_tile(tagList("Avg EV", metric_badge(avg_ev, 92, 82)),
-                  fmt_ev(avg_ev), tile_class(avg_ev, 92, 82),
-                  trend        = mk_trend_ev(avg_ev, avg_ev_base),
-                  tooltip_text = "Average exit velocity on contact. MLB average ~88 mph; 92+ is above average."),
-        stat_tile(tagList("Hard Hit%", metric_badge(hh, 0.40, 0.25)),
-                  fmt_pct(hh), tile_class(hh, 0.40, 0.25),
-                  trend        = mk_trend(hh, hh_base),
-                  tooltip_text = "Share of batted balls at 95+ mph. MLB average ~38%; 40%+ is elite."),
-        stat_tile(tagList("Zone Swing%", metric_badge(swing_zone, 0.70, 0.00)),
-                  fmt_pct(swing_zone), tile_class(swing_zone, 0.70, 0.00),
-                  trend        = mk_trend(swing_zone, swing_zone_base),
-                  tooltip_text = "How often you swung at pitches inside the strike zone — attacking hittable pitches."),
-        stat_tile(tagList("Chase%", metric_badge(chase, 0.25, 0.35, hi_good = FALSE)),
-                  fmt_pct(chase), tile_class(chase, 0.25, 0.35, hi_good = FALSE),
-                  trend        = mk_trend(chase, chase_base),
-                  tooltip_text = "Chase rate — how often you swung at pitches outside the zone. MLB avg ~30%; lower is better.")
+    tabsetPanel(
+      id = "player_hitter_tabs",
+      tabPanel("Overview",
+        tags$h6("Hitting", style = "color:#0a1628; font-weight:600; margin:12px 0 8px;"),
+        layout_columns(
+          col_widths = breakpoints(sm = 6, md = 3),
+          stat_tile(tagList("Avg EV", metric_badge(avg_ev, 92, 82)),
+                    fmt_ev(avg_ev), tile_class(avg_ev, 92, 82),
+                    trend        = mk_trend_ev(avg_ev, avg_ev_base),
+                    tooltip_text = "Average exit velocity on contact. MLB average ~88 mph; 92+ is above average."),
+          stat_tile(tagList("Hard Hit%", metric_badge(hh, 0.40, 0.25)),
+                    fmt_pct(hh), tile_class(hh, 0.40, 0.25),
+                    trend        = mk_trend(hh, hh_base),
+                    tooltip_text = "Share of batted balls at 95+ mph. MLB average ~38%; 40%+ is elite."),
+          stat_tile(tagList("Zone Swing%", metric_badge(swing_zone, 0.70, 0.00)),
+                    fmt_pct(swing_zone), tile_class(swing_zone, 0.70, 0.00),
+                    trend        = mk_trend(swing_zone, swing_zone_base),
+                    tooltip_text = "How often you swung at pitches inside the strike zone — attacking hittable pitches."),
+          stat_tile(tagList("Chase%", metric_badge(chase, 0.25, 0.35, hi_good = FALSE)),
+                    fmt_pct(chase), tile_class(chase, 0.25, 0.35, hi_good = FALSE),
+                    trend        = mk_trend(chase, chase_base),
+                    tooltip_text = "Chase rate — how often you swung at pitches outside the zone. MLB avg ~30%; lower is better.")
+        ),
+        layout_columns(
+          col_widths = breakpoints(sm = 12, md = 6),
+          plotlyOutput("player_spray",       height = "360px"),
+          plotlyOutput("player_swing_zones", height = "360px")
+        ),
+        tags$h5("Pitch Log",
+                style = "font-weight:700; color:#0a1628; font-size:15px; margin:16px 0 8px 4px; letter-spacing:0.2px;"),
+        DTOutput("player_hit_log")
       ),
-      layout_columns(
-        col_widths = breakpoints(sm = 12, md = 6),
-        plotlyOutput("player_spray",       height = "360px"),
-        plotlyOutput("player_swing_zones", height = "360px")
-      ),
-      tags$h5("Pitch Log",
-              style = "font-weight:700; color:#0a1628; font-size:15px; margin:16px 0 8px 4px; letter-spacing:0.2px;"),
-      DTOutput("player_hit_log")
+      tabPanel("Game Log",
+        tags$h5("Game-by-Game Stats",
+                style = "font-weight:700; color:#0a1628; font-size:15px; margin:16px 0 8px 4px;"),
+        DTOutput("player_hitter_game_log")
+      )
     )
   })
 
@@ -2114,6 +2152,67 @@ server <- function(input, output, session) {
       ) %>%
       config(displayModeBar = FALSE) %>%
       style(hoverinfo = "none")
+  })
+
+  # ── Player: pitcher game log ──────────────────────────────────────────────
+  output$player_pitcher_game_log <- DT::renderDT({
+    req(user_role() == "player")
+    req(user_player_type() %in% c("pitcher", "two-way"))
+    d <- player_fdata_base() %>%
+      group_by(Date) %>%
+      summarise(
+        Pitches   = n(),
+        BF        = n_distinct(paste(Inning, PAofInning)),
+        K         = sum(KorBB == "Strikeout", na.rm = TRUE),
+        BB        = sum(KorBB == "Walk",      na.rm = TRUE),
+        `Strike%` = strike_pct(PitchCall),
+        `Whiff%`  = whiff_pct(PitchCall),
+        `CSW%`    = csw_pct(PitchCall),
+        `Avg Velo` = round(mean(RelSpeed, na.rm = TRUE), 1),
+        .groups = "drop"
+      ) %>%
+      arrange(desc(Date)) %>%
+      mutate(Date = format(Date, "%b %d, %Y"))
+    req(nrow(d) > 0)
+    DT::datatable(d, rownames = FALSE,
+      options = list(pageLength = 20, dom = "t", ordering = FALSE),
+      class = "compact stripe"
+    ) %>%
+      DT::formatPercentage(c("Strike%", "Whiff%", "CSW%"), digits = 1) %>%
+      DT::formatRound("Avg Velo", digits = 1) %>%
+      DT::formatStyle("Date", textAlign = "left") %>%
+      DT::formatStyle(c("Pitches","BF","K","BB","Strike%","Whiff%","CSW%","Avg Velo"),
+                      textAlign = "center")
+  })
+
+  # ── Player: hitter game log ───────────────────────────────────────────────
+  output$player_hitter_game_log <- DT::renderDT({
+    req(user_role() == "player")
+    req(user_player_type() == "hitter")
+    d <- player_fdata_base() %>%
+      group_by(Date) %>%
+      summarise(
+        PA          = n_distinct(paste(Inning, PAofInning)),
+        H           = sum(PlayResult %in% c("Single","Double","Triple","HomeRun"), na.rm = TRUE),
+        HR          = sum(PlayResult == "HomeRun", na.rm = TRUE),
+        BB          = sum(KorBB == "Walk",      na.rm = TRUE),
+        K           = sum(KorBB == "Strikeout", na.rm = TRUE),
+        `Avg EV`    = round(mean(ExitSpeed[PitchCall == "InPlay"], na.rm = TRUE), 1),
+        `Hard Hit%` = hard_hit_pct(ExitSpeed[PitchCall == "InPlay"]),
+        .groups = "drop"
+      ) %>%
+      arrange(desc(Date)) %>%
+      mutate(Date = format(Date, "%b %d, %Y"))
+    req(nrow(d) > 0)
+    DT::datatable(d, rownames = FALSE,
+      options = list(pageLength = 20, dom = "t", ordering = FALSE),
+      class = "compact stripe"
+    ) %>%
+      DT::formatPercentage("Hard Hit%", digits = 1) %>%
+      DT::formatRound("Avg EV", digits = 1) %>%
+      DT::formatStyle("Date", textAlign = "left") %>%
+      DT::formatStyle(c("PA","H","HR","BB","K","Avg EV","Hard Hit%"),
+                      textAlign = "center")
   })
 
   # ── Player: hitter pitch log ───────────────────────────────────────────────
