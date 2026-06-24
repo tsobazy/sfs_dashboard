@@ -45,6 +45,11 @@ data$TaggedPitchType <- if_else(
 data$Count <- paste0(data$Balls, "-", data$Strikes)
 
 # ── Constants ─────────────────────────────────────────────────────────────────
+# TrackMan team code for the SF Seagulls. Game CSVs contain both teams, so the
+# dashboard filters to this code to show only Seagulls players (our pitchers on
+# the Pitching tab, our hitters on the Hitting tab).
+SEAGULLS_TEAM <- "SAN_FRA4"
+
 SZ_LEFT  <- -0.83
 SZ_RIGHT <-  0.83
 SZ_BOT   <-  1.50
@@ -347,7 +352,8 @@ coach_sidebar <- function() {
 
       pickerInput(
         "player", "Player",
-        choices = c("All Players", sort(unique(data$Pitcher))),
+        choices = c("All Players",
+                    sort(unique(data$Pitcher[data$PitcherTeam == SEAGULLS_TEAM]))),
         options = list(`live-search` = TRUE)
       ),
       selectInput("season", "Season",

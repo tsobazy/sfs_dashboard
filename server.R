@@ -148,10 +148,11 @@ server <- function(input, output, session) {
   # Updates player dropdown whenever main tab changes
   observeEvent(input$main_tabs, {
     req(user_role() == "coach")
+    d <- app_data()
     players <- if (input$main_tabs == "Pitching") {
-      sort(unique(app_data()$Pitcher))
+      sort(unique(d$Pitcher[d$PitcherTeam == SEAGULLS_TEAM]))
     } else {
-      sort(unique(app_data()$Batter))
+      sort(unique(d$Batter[d$BatterTeam == SEAGULLS_TEAM]))
     }
     updatePickerInput(session, "player",
       choices  = c("All Players", players),
@@ -182,12 +183,16 @@ server <- function(input, output, session) {
       d
     )
 
-    if (!is.null(input$player) && input$player != "All Players") {
-      if (is.null(input$main_tabs) || input$main_tabs == "Pitching") {
+    # Restrict to Seagulls players: our pitchers on Pitching, our hitters on
+    # Hitting. Keeps "All Players" aggregates and leaderboards opponent-free.
+    if (is.null(input$main_tabs) || input$main_tabs == "Pitching") {
+      d <- d %>% filter(PitcherTeam == SEAGULLS_TEAM)
+      if (!is.null(input$player) && input$player != "All Players")
         d <- d %>% filter(Pitcher == input$player)
-      } else {
+    } else {
+      d <- d %>% filter(BatterTeam == SEAGULLS_TEAM)
+      if (!is.null(input$player) && input$player != "All Players")
         d <- d %>% filter(Batter == input$player)
-      }
     }
     d
   })
@@ -1141,12 +1146,14 @@ server <- function(input, output, session) {
 
       if (is.null(input$main_tabs) || input$main_tabs == "Pitching") {
         updatePickerInput(session, "player",
-          choices  = c("All Players", sort(unique(new_data$Pitcher))),
+          choices  = c("All Players",
+            sort(unique(new_data$Pitcher[new_data$PitcherTeam == SEAGULLS_TEAM]))),
           selected = "All Players"
         )
       } else {
         updatePickerInput(session, "player",
-          choices  = c("All Players", sort(unique(new_data$Batter))),
+          choices  = c("All Players",
+            sort(unique(new_data$Batter[new_data$BatterTeam == SEAGULLS_TEAM]))),
           selected = "All Players"
         )
       }
