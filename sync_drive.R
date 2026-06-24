@@ -8,7 +8,11 @@ GAME_CSV_DIR <- "data/game_csvs"
 sync_from_drive <- function(folder_id,
                              local_dir = GAME_CSV_DIR) {
   library(googledrive)
-  drive_auth(cache = ".secrets")
+  # Load the cached token silently. Scope must match setup_drive_auth.R so
+  # gargle reuses the cached token instead of trying to re-auth.
+  options(gargle_oauth_email = TRUE)
+  drive_auth(cache  = ".secrets",
+             scopes = "https://www.googleapis.com/auth/drive.readonly")
 
   remote_files <- drive_ls(as_id(folder_id), type = "csv")
   if (nrow(remote_files) == 0) return(invisible(0L))
