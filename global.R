@@ -17,6 +17,25 @@ shinymanager::set_labels(
   "Login"               = "Sign In"
 )
 
+# ── Auto-sync game CSVs from Google Drive on startup ────────────────────────────
+# Pulls any new CSVs from the configured Drive folder and rebuilds
+# all_fall_25.csv before the data is read below. Runs only when a folder ID is
+# set and Drive auth (.secrets/) exists, and never blocks startup: any failure
+# (offline, expired token, empty folder) is caught so the app still boots on the
+# CSVs already present locally.
+source("sync_drive.R")
+local({
+  folder_id <- Sys.getenv("SEAGULLS_DRIVE_FOLDER_ID")
+  if (nchar(folder_id) == 0 || !dir.exists(".secrets")) return(invisible())
+  tryCatch({
+    n_new <- sync_from_drive(folder_id)
+    build_combined_csv()
+    message("Drive sync: ", n_new, " new file(s) downloaded on startup.")
+  }, error = function(e) {
+    message("Drive sync skipped on startup: ", conditionMessage(e))
+  })
+})
+
 # ── Data ──────────────────────────────────────────────────────────────────────
 data <- read_csv("all_fall_25.csv", show_col_types = FALSE)
 
