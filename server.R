@@ -500,7 +500,7 @@ server <- function(input, output, session) {
                 size = 4, fontface = "bold") +
       scale_color_identity() +
       coord_fixed(xlim = c(-2.5, 2.5), ylim = c(-2.5, 2.5), expand = FALSE) +
-      labs(title    = "Zone Profile",
+      labs(title    = "Zone Profile (Catcher's View)",
            subtitle = "Catcher's-eye view — looking out toward the pitcher",
            x = NULL, y = NULL,
            caption  = "Zone from Catcher's Perspective") +
@@ -581,8 +581,8 @@ server <- function(input, output, session) {
     d <- fdata() %>%
       group_by(PitchCategory) %>%
       summarise(
-        HorzBreak        = mean(HorzBreak,        na.rm = TRUE),
-        InducedVertBreak = mean(InducedVertBreak, na.rm = TRUE),
+        HorzBreak        = round(mean(HorzBreak,        na.rm = TRUE), 2),
+        InducedVertBreak = round(mean(InducedVertBreak, na.rm = TRUE), 2),
         n                = n(),
         .groups          = "drop"
       )
@@ -607,7 +607,7 @@ server <- function(input, output, session) {
       scale_size_continuous(range = c(4, 12)) +
       coord_fixed() +
       labs(
-        title    = "Movement Profile",
+        title    = "Movement Profile (Pitcher's View)",
         subtitle = "Pitcher's-eye view — like the TV camera behind the mound",
         x = "Horizontal Break (in)", y = "Induced Vert Break (in)",
         color = NULL, size = "Pitches"
@@ -947,7 +947,7 @@ server <- function(input, output, session) {
                 size = 4, fontface = "bold") +
       scale_color_identity() +
       coord_fixed(xlim = c(-2.5, 2.5), ylim = c(-2.5, 2.5), expand = FALSE) +
-      labs(title    = "Swing Rates by Zone",
+      labs(title    = "Swing Rates by Zone (Catcher's View)",
            subtitle = "Catcher's-eye view — looking out toward the pitcher",
            x = NULL, y = NULL,
            caption  = "Zone from Catcher's Perspective") +
@@ -1141,7 +1141,7 @@ server <- function(input, output, session) {
       new_data$PitchCategory[is.na(new_data$PitchCategory)] <- "Undefined"
       new_data$PitchCategory <- factor(new_data$PitchCategory,
         levels = c("Fastball", "Breaking Ball", "Offspeed", "Undefined"))
-      new_data$Season <- "Fall 2025"
+      new_data$Season <- "Summer 2026"
       app_data(new_data)
 
       if (is.null(input$main_tabs) || input$main_tabs == "Pitching") {
@@ -1200,7 +1200,7 @@ server <- function(input, output, session) {
     req(user_role() == "player")
     ptype   <- user_player_type()
     seasons <- player_fdata_base() %>% pull(Season) %>% unique() %>% sort(decreasing = TRUE)
-    if (length(seasons) == 0) seasons <- "Fall 2025"
+    if (length(seasons) == 0) seasons <- "Summer 2026"
     n_games <- length(player_games())
     window  <- if (is.null(input$player_window)) "This Game" else input$player_window
 
@@ -1490,7 +1490,7 @@ server <- function(input, output, session) {
 
               tags$label("Season", style = "font-weight:600; font-size:12px;"),
               selectInput("player_season", label = NULL,
-                choices = c("Fall 2025"), selected = "Fall 2025", width = "100%"),
+                choices = c("Summer 2026"), selected = "Summer 2026", width = "100%"),
 
               tags$label("Games", style = "font-weight:600; font-size:12px; margin-top:8px; display:block;"),
               radioGroupButtons("player_game_window", label = NULL,
@@ -1728,7 +1728,7 @@ server <- function(input, output, session) {
                 size = 4, fontface = "bold") +
       scale_color_identity() +
       coord_fixed(xlim = c(-2.5, 2.5), ylim = c(-2.5, 2.5), expand = FALSE) +
-      labs(title    = "Zone Profile",
+      labs(title    = "Zone Profile (Catcher's View)",
            subtitle = "Catcher's-eye view — looking out toward the pitcher",
            x = NULL, y = NULL,
            caption  = "Zone from Catcher's Perspective") +
@@ -1797,8 +1797,8 @@ server <- function(input, output, session) {
     d <- player_fdata() %>%
       group_by(PitchCategory) %>%
       summarise(
-        HorzBreak        = mean(HorzBreak,        na.rm = TRUE),
-        InducedVertBreak = mean(InducedVertBreak, na.rm = TRUE),
+        HorzBreak        = round(mean(HorzBreak,        na.rm = TRUE), 2),
+        InducedVertBreak = round(mean(InducedVertBreak, na.rm = TRUE), 2),
         n                = n(),
         .groups          = "drop"
       )
@@ -1821,7 +1821,7 @@ server <- function(input, output, session) {
       scale_size_continuous(range = c(4, 12)) +
       coord_fixed() +
       labs(
-        title    = "Movement Profile",
+        title    = "Movement Profile (Pitcher's View)",
         subtitle = "Pitcher's-eye view — like the TV camera behind the mound",
         x = "Horizontal Break (in)", y = "Induced Vert Break (in)",
         color = NULL, size = "Pitches"
@@ -2140,7 +2140,7 @@ server <- function(input, output, session) {
                 size = 4, fontface = "bold") +
       scale_color_identity() +
       coord_fixed(xlim = c(-2.5, 2.5), ylim = c(-2.5, 2.5), expand = FALSE) +
-      labs(title    = "Swing Rates by Zone",
+      labs(title    = "Swing Rates by Zone (Catcher's View)",
            subtitle = "Catcher's-eye view — looking out toward the pitcher",
            x = NULL, y = NULL,
            caption  = "Zone from Catcher's Perspective") +

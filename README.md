@@ -47,7 +47,7 @@ shiny::runApp()
 
 Real game CSVs go in `data/game_csvs/`. Drop Trackman export files in there and restart the app — they load automatically. They're also pulled automatically from the shared Google Drive folder on startup (see Drive sync).
 
-Real combined data is written to `all_fall_25.csv`, which is **git-ignored** so real player data stays off the repo. Fresh clones fall back to the committed `sample_data.csv` so the app still runs out of the box.
+Real combined data is written to `all_fall_25.csv`, which is **git-ignored** so real player data stays off the repo. The app loads only this real data — there is no sample fallback, so a working copy needs either Drive sync configured or CSVs in `data/game_csvs/`.
 
 ---
 

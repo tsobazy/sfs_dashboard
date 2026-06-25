@@ -37,11 +37,12 @@ local({
 })
 
 # ── Data ──────────────────────────────────────────────────────────────────────
-# Real game data lives in all_fall_25.csv (rebuilt from Drive CSVs, kept off git
-# as it contains real player data). Fresh clones won't have it, so fall back to
-# the committed sample so the app still runs out of the box.
-data_path <- if (file.exists("all_fall_25.csv")) "all_fall_25.csv" else "sample_data.csv"
-data <- read_csv(data_path, show_col_types = FALSE)
+# Real game data only — rebuilt from the Drive CSVs into all_fall_25.csv on
+# startup (kept off git as it contains real player data).
+if (!file.exists("all_fall_25.csv"))
+  stop("all_fall_25.csv not found. Configure Drive sync or drop game CSVs in ",
+       "data/game_csvs/ so the app has data to load.")
+data <- read_csv("all_fall_25.csv", show_col_types = FALSE)
 
 data$TaggedPitchType <- if_else(
   data$TaggedPitchType %in% c("Other", NA_character_), "Undefined", data$TaggedPitchType
@@ -49,12 +50,11 @@ data$TaggedPitchType <- if_else(
 data$Count <- paste0(data$Balls, "-", data$Strikes)
 
 # ── Constants ─────────────────────────────────────────────────────────────────
-# TrackMan team code(s) for the SF Seagulls. Game CSVs contain both teams, so
-# the dashboard filters to these codes to show only Seagulls players (our
-# pitchers on the Pitching tab, our hitters on the Hitting tab). Real TrackMan
-# exports use "SAN_FRA4"; the committed sample_data.csv uses "SFS_SEA". Accept
-# both so the demo and real data both resolve correctly.
-SEAGULLS_TEAM <- c("SAN_FRA4", "SFS_SEA")
+# TrackMan team code for the SF Seagulls. Game CSVs contain both teams, so the
+# dashboard filters to this code to show only Seagulls players (our pitchers on
+# the Pitching tab, our hitters on the Hitting tab). Matching uses %in%, so add
+# more codes here if TrackMan ever tags the Seagulls differently.
+SEAGULLS_TEAM <- "SAN_FRA4"
 
 SZ_LEFT  <- -0.83
 SZ_RIGHT <-  0.83
@@ -85,7 +85,7 @@ data$PitchCategory <- PITCH_CATEGORY_MAP[data$TaggedPitchType]
 data$PitchCategory[is.na(data$PitchCategory)] <- "Undefined"
 data$PitchCategory <- factor(data$PitchCategory,
   levels = c("Fastball", "Breaking Ball", "Offspeed", "Undefined"))
-data$Season <- "Fall 2025"
+data$Season <- "Summer 2026"
 
 PITCH_CATEGORY_COLORS <- c(
   Fastball        = "#D22D49",
@@ -363,7 +363,7 @@ coach_sidebar <- function() {
         options = list(`live-search` = TRUE)
       ),
       selectInput("season", "Season",
-        choices = c("Fall 2025"), selected = "Fall 2025"),
+        choices = c("Summer 2026"), selected = "Summer 2026"),
       radioGroupButtons(
         "game_window", label = "Games",
         choices  = c("Last 5", "Last 10", "Full Season", "Custom"),
