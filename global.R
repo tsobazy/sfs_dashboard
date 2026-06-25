@@ -128,16 +128,29 @@ chase_pct <- function(side, height, calls) {
   sum(ooz & swings, na.rm = TRUE) / n_ooz
 }
 
+# Hard Hit% — share of balls in play struck at or above HARD_HIT_MPH.
+# Set to 85 for this college wood-bat summer league (league avg EV ~79 mph;
+# MLB's 95 is unrealistic here and grades nearly everyone at 0%).
+HARD_HIT_MPH <- 85
+
 hard_hit_pct <- function(ev) {
   ev <- ev[!is.na(ev)]
   if (length(ev) == 0) return(NA_real_)
-  mean(ev >= 95)
+  mean(ev >= HARD_HIT_MPH)
 }
+
+# Barrel% — share of balls in play with both high exit velo and a productive
+# launch angle. MLB uses EV >= 98 with a narrow 26-30 deg band; at this league's
+# exit velos that yields ~0 barrels, so we use EV >= 90 (genuinely hard here,
+# ~p90 of avg EV) with a wider 20-35 deg productive window (~8% league rate).
+BARREL_MPH    <- 90
+BARREL_LA_LOW <- 20
+BARREL_LA_HI  <- 35
 
 barrel_pct <- function(ev, la) {
   ok <- !is.na(ev) & !is.na(la)
   if (sum(ok) == 0) return(NA_real_)
-  mean(ev[ok] >= 98 & la[ok] >= 26 & la[ok] <= 30)
+  mean(ev[ok] >= BARREL_MPH & la[ok] >= BARREL_LA_LOW & la[ok] <= BARREL_LA_HI)
 }
 
 gb_pct <- function(ht) {

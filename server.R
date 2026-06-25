@@ -1058,10 +1058,10 @@ server <- function(input, output, session) {
         style = "padding:12px 0 8px;",
         layout_columns(
           col_widths = breakpoints(sm = 6, md = 3),
-          stat_tile("Strike%", fmt(spct), tile_class(spct, 0.65, 0.54)),
-          stat_tile("Whiff%",  fmt(wpct), tile_class(wpct, 0.30, 0.19)),
-          stat_tile("CSW%",    fmt(cswp), tile_class(cswp, 0.28, 0.20)),
-          stat_tile("GB%",     fmt(gbp),  tile_class(gbp,  0.45, 0.30))
+          stat_tile("Strike%", fmt(spct), tile_class(spct, 0.65, 0.53)),
+          stat_tile("Whiff%",  fmt(wpct), tile_class(wpct, 0.29, 0.13)),
+          stat_tile("CSW%",    fmt(cswp), tile_class(cswp, 0.31, 0.21)),
+          stat_tile("GB%",     fmt(gbp),  tile_class(gbp,  0.48, 0.33))
         )
       )
     )
@@ -1095,10 +1095,10 @@ server <- function(input, output, session) {
       style = "padding:12px 0 8px;",
       layout_columns(
         col_widths = breakpoints(sm = 6, md = 3),
-        stat_tile("AVG",       fmt_avg(tavg),  tile_class(tavg,   0.300, 0.230)),
-        stat_tile("Hard Hit%", fmt_pct(hh),    tile_class(hh,     0.40,  0.25)),
-        stat_tile("Barrel%",   fmt_pct(brl),   tile_class(brl,    0.08,  0.04)),
-        stat_tile("Avg EV",    fmt_ev(avg_ev), tile_class(avg_ev, 92,    82))
+        stat_tile("AVG",       fmt_avg(tavg),  tile_class(tavg,   0.300, 0.220)),
+        stat_tile("Hard Hit%", fmt_pct(hh),    tile_class(hh,     0.50,  0.30)),
+        stat_tile("Barrel%",   fmt_pct(brl),   tile_class(brl,    0.12,  0.04)),
+        stat_tile("Avg EV",    fmt_ev(avg_ev), tile_class(avg_ev, 84,    73))
       )
     )
   })
@@ -1581,20 +1581,20 @@ server <- function(input, output, session) {
         tags$h6("Pitching", style = "color:#0a1628; font-weight:600; margin:12px 0 8px;"),
         layout_columns(
           col_widths = breakpoints(sm = 6, md = 3),
-          stat_tile(tagList("Strike%", metric_badge(spct, 0.65, 0.54)),
-                    fmt(spct), tile_class(spct, 0.65, 0.54),
+          stat_tile(tagList("Strike%", metric_badge(spct, 0.65, 0.53)),
+                    fmt(spct), tile_class(spct, 0.65, 0.53),
                     trend        = mk_trend(spct, spct_base),
                     tooltip_text = "Strikes, swings, and balls in play as a share of all pitches."),
-          stat_tile(tagList("Whiff%", metric_badge(wpct, 0.30, 0.19)),
-                    fmt(wpct), tile_class(wpct, 0.30, 0.19),
+          stat_tile(tagList("Whiff%", metric_badge(wpct, 0.29, 0.13)),
+                    fmt(wpct), tile_class(wpct, 0.29, 0.13),
                     trend        = mk_trend(wpct, wpct_base),
-                    tooltip_text = "Share of swings that completely missed — elite starters average ~26%."),
-          stat_tile(tagList("CSW%", metric_badge(cswp, 0.28, 0.20)),
-                    fmt(cswp), tile_class(cswp, 0.28, 0.20),
+                    tooltip_text = "Share of swings that completely missed. Top arms in this league are around 29%+."),
+          stat_tile(tagList("CSW%", metric_badge(cswp, 0.31, 0.21)),
+                    fmt(cswp), tile_class(cswp, 0.31, 0.21),
                     trend        = mk_trend(cswp, cswp_base),
                     tooltip_text = "Called Strikes + Whiffs per pitch — the best single-pitch quality metric."),
-          stat_tile(tagList("Chase%", metric_badge(chsp, 0.30, 0.00)),
-                    fmt(chsp), tile_class(chsp, 0.30, 0.00),
+          stat_tile(tagList("Chase%", metric_badge(chsp, 0.30, 0.20)),
+                    fmt(chsp), tile_class(chsp, 0.30, 0.20),
                     trend        = mk_trend(chsp, chsp_base),
                     tooltip_text = "How often hitters chased pitches outside the zone.")
         ),
@@ -1926,20 +1926,20 @@ server <- function(input, output, session) {
         tags$h6("Hitting", style = "color:#0a1628; font-weight:600; margin:12px 0 8px;"),
         layout_columns(
           col_widths = breakpoints(sm = 6, md = 3),
-          stat_tile(tagList("Avg EV", metric_badge(avg_ev, 92, 82)),
-                    fmt_ev(avg_ev), tile_class(avg_ev, 92, 82),
+          stat_tile(tagList("Avg EV", metric_badge(avg_ev, 84, 73)),
+                    fmt_ev(avg_ev), tile_class(avg_ev, 84, 73),
                     trend        = mk_trend_ev(avg_ev, avg_ev_base),
-                    tooltip_text = "Average exit velocity on contact. MLB average ~88 mph; 92+ is above average."),
-          stat_tile(tagList("Hard Hit%", metric_badge(hh, 0.40, 0.25)),
-                    fmt_pct(hh), tile_class(hh, 0.40, 0.25),
+                    tooltip_text = "Average exit velocity on contact. League average ~79 mph; 84+ is above average here."),
+          stat_tile(tagList("Hard Hit%", metric_badge(hh, 0.50, 0.30)),
+                    fmt_pct(hh), tile_class(hh, 0.50, 0.30),
                     trend        = mk_trend(hh, hh_base),
-                    tooltip_text = "Share of batted balls at 95+ mph. MLB average ~38%; 40%+ is elite."),
-          stat_tile(tagList("Zone Swing%", metric_badge(swing_zone, 0.70, 0.00)),
-                    fmt_pct(swing_zone), tile_class(swing_zone, 0.70, 0.00),
+                    tooltip_text = "Share of batted balls at 85+ mph (the hard-hit bar for this league). League median ~37%; 50%+ is strong."),
+          stat_tile(tagList("Zone Swing%", metric_badge(swing_zone, 0.78, 0.60)),
+                    fmt_pct(swing_zone), tile_class(swing_zone, 0.78, 0.60),
                     trend        = mk_trend(swing_zone, swing_zone_base),
                     tooltip_text = "How often you swung at pitches inside the strike zone — attacking hittable pitches."),
-          stat_tile(tagList("Chase%", metric_badge(chase, 0.25, 0.35, hi_good = FALSE)),
-                    fmt_pct(chase), tile_class(chase, 0.25, 0.35, hi_good = FALSE),
+          stat_tile(tagList("Chase%", metric_badge(chase, 0.22, 0.32, hi_good = FALSE)),
+                    fmt_pct(chase), tile_class(chase, 0.22, 0.32, hi_good = FALSE),
                     trend        = mk_trend(chase, chase_base),
                     tooltip_text = "Chase rate — how often you swung at pitches outside the zone. MLB avg ~30%; lower is better.")
         ),

@@ -71,8 +71,8 @@ Batted-ball metrics use only balls in play with a measured exit velocity:
 |--------|---------|-------------|
 | **AVG** | total Hits ÷ total AB, where Hits = Single+Double+Triple+HomeRun and **AB = PA − BB** | `PlayResult`, `KorBB`, `Date`, `Inning`, `PAofInning` |
 | **Avg EV** | mean of `ExitSpeed` on balls in play | `ExitSpeed`, `PitchCall` |
-| **Hard Hit%** | share of balls in play with `ExitSpeed ≥ 95` mph | `ExitSpeed` |
-| **Barrel%** | share of balls in play with `ExitSpeed ≥ 98` mph **and** launch angle `Angle` between 26°–30° | `ExitSpeed`, `Angle` |
+| **Hard Hit%** | share of balls in play with `ExitSpeed ≥ 85` mph (`HARD_HIT_MPH`) — calibrated to this college wood-bat league (avg EV ~79 mph) | `ExitSpeed` |
+| **Barrel%** | share of balls in play with `ExitSpeed ≥ 90` mph **and** launch angle `Angle` between 20°–35° (`BARREL_MPH` / `BARREL_LA_LOW` / `BARREL_LA_HI`) | `ExitSpeed`, `Angle` |
 | **Zone Swing%** | swings on in-zone pitches ÷ in-zone pitches | `PitchCall`, `PlateLocSide`, `PlateLocHeight` |
 | **PA** | distinct plate appearances = `n_distinct(Date + Inning + PAofInning)` | `Date`, `Inning`, `PAofInning` |
 | **H** | Single + Double + Triple + HomeRun | `PlayResult` |
@@ -80,21 +80,40 @@ Batted-ball metrics use only balls in play with a measured exit velocity:
 
 ---
 
+## Evaluation benchmarks (tile colors)
+
+The green/amber tile colors grade each player against league-realistic bars,
+derived from the **actual distribution** in the current data (all teams = the
+league), roughly green ≈ top quartile, amber ≈ bottom quartile. These are
+**provisional** on ~8 games and will firm up as more data arrives.
+
+| Metric | Green (good) ≥ | Amber (poor) ≤ | Direction |
+|--------|----------------|----------------|-----------|
+| Strike% | 0.65 | 0.53 | higher better |
+| Whiff% | 0.29 | 0.13 | higher better |
+| CSW% | 0.31 | 0.21 | higher better |
+| Chase% (pitcher induces) | 0.30 | 0.20 | higher better |
+| GB% | 0.48 | 0.33 | higher better |
+| AVG | .300 | .220 | higher better |
+| Avg EV | 84 mph | 73 mph | higher better |
+| Hard Hit% | 0.50 | 0.30 | higher better |
+| Barrel% | 0.12 | 0.04 | higher better |
+| Zone Swing% | 0.78 | 0.60 | higher better |
+| Chase% (hitter discipline) | 0.22 | 0.32 | **lower** better |
+
 ## ⚠️ Known simplifications (read before trusting against "official" stats)
 
 These are honest deviations from textbook definitions — not bugs, but worth knowing:
 
-1. **Barrel% is a simplified proxy.** MLB's official barrel is a *sliding scale*
-   (the qualifying launch-angle band widens as exit velo rises, ~98 mph at 26–30°
-   up to a wider band at higher speeds). This app uses a **fixed** rule:
-   EV ≥ 98 AND LA 26–30°. It approximates barrels but will under-count hard-hit
-   balls outside that narrow angle band.
+1. **Barrel% is a simplified, league-calibrated proxy.** MLB's official barrel is
+   a *sliding scale* at much higher exit velos (≥98 mph). At this league's EVs that
+   yields ~0 barrels, so we use a fixed EV ≥ 90 AND LA 20–35° (~8% league rate). It
+   rewards genuinely hard, well-launched contact for this level, not MLB barrels.
 2. **AB = PA − BB only.** True at-bats also exclude hit-by-pitch, sacrifices, and
    catcher's interference. If those events exist in the data, AVG will be slightly
    off (denominator a touch too high). HBP/SAC are not currently subtracted.
-3. **Hard Hit% threshold (95 mph)** and **Barrel angle band** are MLB benchmarks —
-   they are *not* adjusted for this league's level. See the "league comparison"
-   plan for the intended fix.
+3. **Benchmarks come from a small sample** (~8 games) and include opponents as the
+   league reference. They are provisional and should be re-derived as data grows.
 4. **BF / PA counting** assumes `PAofInning` uniquely identifies a plate
    appearance within an inning of a game. Re-thrown/duplicated rows in a raw
    TrackMan file could affect the count.
