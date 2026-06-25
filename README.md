@@ -45,9 +45,9 @@ shiny::runApp()
 
 ## Adding game data
 
-Real game CSVs go in `data/game_csvs/`. Drop Trackman export files in there and restart the app — they load automatically.
+Real game CSVs go in `data/game_csvs/`. Drop Trackman export files in there and restart the app — they load automatically. They're also pulled automatically from the shared Google Drive folder on startup (see Drive sync).
 
-The file `all_fall_25.csv` is sample data included so the app runs out of the box without any game files.
+Real combined data is written to `all_fall_25.csv`, which is **git-ignored** so real player data stays off the repo. Fresh clones fall back to the committed `sample_data.csv` so the app still runs out of the box.
 
 ---
 

@@ -11,6 +11,10 @@ credentials.sqlite
 data/game_csvs/
 !data/game_csvs/.gitkeep
 
+# Combined real game data (rebuilt from Drive CSVs — keep off git).
+# A committed sample_data.csv is used as a fallback so fresh clones still run.
+all_fall_25.csv
+
 # Local environment (contains Drive folder ID)
 .Renviron
 
