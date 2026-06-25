@@ -69,7 +69,9 @@ Batted-ball metrics use only balls in play with a measured exit velocity:
 
 | Metric | Formula | CSV columns |
 |--------|---------|-------------|
-| **AVG** | total Hits ÷ total AB, where Hits = Single+Double+Triple+HomeRun and **AB = PA − BB** | `PlayResult`, `KorBB`, `Date`, `Inning`, `PAofInning` |
+| **AVG** | Hits ÷ AB, where Hits = Single+Double+Triple+HomeRun and **AB = PA − BB − HBP − Sacrifice** | `PlayResult`, `KorBB`, `PitchCall`, `Date`, `Inning`, `PAofInning` |
+| **OBP** | (H + BB + HBP) ÷ PA | `PlayResult`, `KorBB`, `PitchCall` |
+| **SLG** | total bases (1B+2·2B+3·3B+4·HR) ÷ AB | `PlayResult` |
 | **Avg EV** | mean of `ExitSpeed` on balls in play | `ExitSpeed`, `PitchCall` |
 | **Hard Hit%** | share of balls in play with `ExitSpeed ≥ 85` mph (`HARD_HIT_MPH`) — calibrated to this college wood-bat league (avg EV ~79 mph) | `ExitSpeed` |
 | **Barrel%** | share of balls in play with `ExitSpeed ≥ 90` mph **and** launch angle `Angle` between 20°–35° (`BARREL_MPH` / `BARREL_LA_LOW` / `BARREL_LA_HI`) | `ExitSpeed`, `Angle` |
@@ -109,9 +111,10 @@ These are honest deviations from textbook definitions — not bugs, but worth kn
    a *sliding scale* at much higher exit velos (≥98 mph). At this league's EVs that
    yields ~0 barrels, so we use a fixed EV ≥ 90 AND LA 20–35° (~8% league rate). It
    rewards genuinely hard, well-launched contact for this level, not MLB barrels.
-2. **AB = PA − BB only.** True at-bats also exclude hit-by-pitch, sacrifices, and
-   catcher's interference. If those events exist in the data, AVG will be slightly
-   off (denominator a touch too high). HBP/SAC are not currently subtracted.
+2. **AB now excludes BB, HBP, and Sacrifice** (catcher's interference, if it ever
+   appears, is not handled). OBP includes HBP in the numerator. The OBP denominator
+   uses PA (it does not separate sac flies from sac bunts — negligible at this
+   data's volume).
 3. **Benchmarks come from a small sample** (~8 games) and include opponents as the
    league reference. They are provisional and should be re-derived as data grows.
 4. **BF / PA counting** assumes `PAofInning` uniquely identifies a plate

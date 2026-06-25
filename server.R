@@ -734,6 +734,8 @@ server <- function(input, output, session) {
         PA     = n_distinct(paste(Date, Inning, PAofInning)),
         H      = sum(PlayResult %in% c("Single","Double","Triple","HomeRun"), na.rm=TRUE),
         BB     = sum(KorBB == "Walk",      na.rm = TRUE),
+        HBP    = sum(PitchCall == "HitByPitch", na.rm = TRUE),
+        SAC    = sum(PlayResult == "Sacrifice",  na.rm = TRUE),
         K      = sum(KorBB == "Strikeout", na.rm = TRUE),
         Single = sum(PlayResult == "Single",   na.rm = TRUE),
         Double = sum(PlayResult == "Double",   na.rm = TRUE),
@@ -748,10 +750,10 @@ server <- function(input, output, session) {
         .groups = "drop"
       ) %>%
       mutate(
-        AB    = PA - BB,
+        AB    = PA - BB - HBP - SAC,
         TB    = Single + 2*Double + 3*Triple + 4*HR,
         AVG   = if_else(AB > 0, H / AB, NA_real_),
-        OBP   = if_else(PA > 0, (H + BB) / PA, NA_real_),
+        OBP   = if_else(PA > 0, (H + BB + HBP) / PA, NA_real_),
         SLG   = if_else(AB > 0, TB / AB, NA_real_),
         `K%`  = K  / PA,
         `BB%` = BB / PA,
@@ -1079,12 +1081,14 @@ server <- function(input, output, session) {
     team_avgs <- d %>%
       group_by(Batter) %>%
       summarise(
-        PA = n_distinct(paste(Date, Inning, PAofInning)),
-        H  = sum(PlayResult %in% c("Single","Double","Triple","HomeRun"), na.rm = TRUE),
-        BB = sum(KorBB == "Walk", na.rm = TRUE),
+        PA  = n_distinct(paste(Date, Inning, PAofInning)),
+        H   = sum(PlayResult %in% c("Single","Double","Triple","HomeRun"), na.rm = TRUE),
+        BB  = sum(KorBB == "Walk", na.rm = TRUE),
+        HBP = sum(PitchCall == "HitByPitch", na.rm = TRUE),
+        SAC = sum(PlayResult == "Sacrifice",  na.rm = TRUE),
         .groups = "drop"
       ) %>%
-      summarise(total_H = sum(H), total_AB = sum(PA - BB))
+      summarise(total_H = sum(H), total_AB = sum(PA - BB - HBP - SAC))
     tavg <- if (team_avgs$total_AB > 0) team_avgs$total_H / team_avgs$total_AB else NA_real_
 
     fmt_ev  <- function(x) if (is.na(x)) "—" else paste0(round(x, 1), " mph")
