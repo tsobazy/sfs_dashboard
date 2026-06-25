@@ -14,6 +14,26 @@ TrackMan CSV columns, so the numbers can be audited. Formulas live in
 - The sidebar filters (games window, pitch category, count, innings) subset the
   rows before any metric is computed.
 
+## Raw-data cleaning (`clean_trackman_data`, global.R)
+
+The game files are TrackMan `_unverified` exports, which carry known errors.
+Every metric runs on **cleaned** data — the raw CSV is never shown as-is. The
+cleaner is conservative (only clearly-bad values are touched) and logs a summary
+on load. Rules:
+
+1. **Drop undated rows** — rows with no `Date` (can't be tied to a game; in these
+   files they also have no pitch tracking).
+2. **Fix name misspellings** (`NAME_FIXES` map) so a typo doesn't split one
+   player into two — e.g. "Ramierz, Alan" → "Ramirez, Alan". Extend as found.
+3. **Null physically-impossible pitch locations** (|side| > 3.5 ft, or height
+   outside −1…6 ft) — radar glitches. Wild-but-plausible misses are kept.
+4. **Null mistracked exit velocities** on contact (< 40 mph or > 120 mph) — these
+   aren't real batted balls; the launch angle is dropped with them.
+5. **Null impossible out counts** (> 2 or < 0).
+
+The same cleaning runs on the Drive-sync reload path, so re-synced data is
+cleaned identically.
+
 ## Pitch grouping (`PITCH_CATEGORY_MAP`, global.R)
 
 `TaggedPitchType` from TrackMan is collapsed into four categories:

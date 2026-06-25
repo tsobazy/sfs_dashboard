@@ -1136,6 +1136,7 @@ server <- function(input, output, session) {
       n_rows <- build_combined_csv()
 
       new_data <- readr::read_csv("all_fall_25.csv", show_col_types = FALSE)
+      new_data <- clean_trackman_data(new_data)
       new_data$TaggedPitchType <- dplyr::if_else(
         new_data$TaggedPitchType %in% c("Other", NA_character_),
         "Undefined", new_data$TaggedPitchType

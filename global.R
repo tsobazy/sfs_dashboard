@@ -36,6 +36,57 @@ local({
   })
 })
 
+# ── Raw data cleaning ───────────────────────────────────────────────────────
+# TrackMan "_unverified" exports carry known errors. Fix them once, here, so
+# every downstream metric and chart sees clean data. Rules are conservative
+# (only clearly-bad values are touched) and a summary is logged on load.
+
+# Known player-name misspellings -> canonical spelling. Without this a typo
+# splits a player's stats across two dropdown entries. Extend as more surface.
+NAME_FIXES <- c(
+  "Ramierz, Alan" = "Ramirez, Alan"
+)
+
+clean_trackman_data <- function(d) {
+  n0 <- nrow(d)
+
+  # 1) Drop unusable rows with no Date — cannot be attributed to a game, and in
+  #    these files they also have no pitch tracking at all.
+  d <- d[!is.na(d$Date), , drop = FALSE]
+  dropped <- n0 - nrow(d)
+
+  # 2) Fix known name misspellings on both Pitcher and Batter.
+  fixn <- function(x) ifelse(x %in% names(NAME_FIXES), unname(NAME_FIXES[x]), x)
+  n_name <- sum(d$Batter %in% names(NAME_FIXES), d$Pitcher %in% names(NAME_FIXES))
+  d$Batter  <- fixn(d$Batter)
+  d$Pitcher <- fixn(d$Pitcher)
+
+  # 3) Null physically-impossible pitch locations (radar glitches several feet
+  #    off). Wild-but-plausible misses are kept; only clear errors are removed.
+  bad_loc <- !is.na(d$PlateLocSide) &
+    (abs(d$PlateLocSide) > 3.5 | d$PlateLocHeight < -1 | d$PlateLocHeight > 6)
+  bad_loc[is.na(bad_loc)] <- FALSE
+  d$PlateLocSide[bad_loc]   <- NA_real_
+  d$PlateLocHeight[bad_loc] <- NA_real_
+
+  # 4) Null mistracked exit velocities on contact (sub-40 mph isn't a real
+  #    batted ball; >120 is impossible at this level). Angle goes with it.
+  bad_ev <- d$PitchCall == "InPlay" & !is.na(d$ExitSpeed) &
+    (d$ExitSpeed < 40 | d$ExitSpeed > 120)
+  bad_ev[is.na(bad_ev)] <- FALSE
+  d$ExitSpeed[bad_ev] <- NA_real_
+  d$Angle[bad_ev]     <- NA_real_
+
+  # 5) Null impossible out counts (>2 or <0).
+  bad_outs <- !is.na(d$Outs) & (d$Outs < 0 | d$Outs > 2)
+  d$Outs[bad_outs] <- NA_real_
+
+  message(sprintf(
+    "Data clean: dropped %d undated rows; fixed %d names; nulled %d locations, %d exit velos, %d out-counts.",
+    dropped, n_name, sum(bad_loc), sum(bad_ev), sum(bad_outs)))
+  d
+}
+
 # ── Data ──────────────────────────────────────────────────────────────────────
 # Real game data only — rebuilt from the Drive CSVs into all_fall_25.csv on
 # startup (kept off git as it contains real player data).
@@ -43,6 +94,7 @@ if (!file.exists("all_fall_25.csv"))
   stop("all_fall_25.csv not found. Configure Drive sync or drop game CSVs in ",
        "data/game_csvs/ so the app has data to load.")
 data <- read_csv("all_fall_25.csv", show_col_types = FALSE)
+data <- clean_trackman_data(data)
 
 data$TaggedPitchType <- if_else(
   data$TaggedPitchType %in% c("Other", NA_character_), "Undefined", data$TaggedPitchType
