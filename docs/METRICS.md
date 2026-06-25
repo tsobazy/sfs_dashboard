@@ -18,21 +18,30 @@ TrackMan CSV columns, so the numbers can be audited. Formulas live in
 
 The game files are TrackMan `_unverified` exports, which carry known errors.
 Every metric runs on **cleaned** data — the raw CSV is never shown as-is. The
-cleaner is conservative (only clearly-bad values are touched) and logs a summary
-on load. Rules:
+cleaner is conservative (only clearly-bad values are touched), logs a summary on
+load, and surfaces a "✓ N data errors auto-cleaned" note in the coach sidebar
+(hover for the per-type breakdown). The same cleaning runs on the Drive-sync
+reload path, so re-synced data is cleaned identically.
 
-1. **Drop undated rows** — rows with no `Date` (can't be tied to a game; in these
-   files they also have no pitch tracking).
-2. **Fix name misspellings** (`NAME_FIXES` map) so a typo doesn't split one
-   player into two — e.g. "Ramierz, Alan" → "Ramirez, Alan". Extend as found.
-3. **Null physically-impossible pitch locations** (|side| > 3.5 ft, or height
-   outside −1…6 ft) — radar glitches. Wild-but-plausible misses are kept.
-4. **Null mistracked exit velocities** on contact (< 40 mph or > 120 mph) — these
-   aren't real batted balls; the launch angle is dropped with them.
-5. **Null impossible out counts** (> 2 or < 0).
+**Complete list of error classes handled** (`clean_trackman_data`):
 
-The same cleaning runs on the Drive-sync reload path, so re-synced data is
-cleaned identically.
+| # | Error class | What happens |
+|---|-------------|--------------|
+| 1 | **Duplicate pitches** (same `PitchUID`) | drop the duplicate, keep first |
+| 2 | **Undated / unattributable rows** (no `Date`, `Pitcher`, or `Batter`) | drop the row |
+| 3 | **Name misspellings** (`NAME_FIXES` map, e.g. "Ramierz"→"Ramirez") | rename so a player isn't split in two |
+| 4 | **Bad pitch velocity** (`RelSpeed` outside 50–105 mph) | null the value |
+| 5 | **Bad spin rate** (`SpinRate` outside 500–3500 rpm) | null the value |
+| 6 | **Bad launch angle** (`Angle` outside −90…90°) | null the value |
+| 7 | **Bad hit distance** (`Distance` outside 0–600 ft) | null the value |
+| 8 | **Impossible pitch location** (|side| > 3.5 ft, or height outside −1…6 ft) | null both location coords |
+| 9 | **Mistracked exit velocity** (on contact, < 40 or > 120 mph) | null exit velo + launch angle |
+| 10 | **Invalid ball/strike count** (`Balls` outside 0–3, `Strikes` outside 0–2) | null the count |
+| 11 | **Invalid out count** (`Outs` outside 0–2) | null the value |
+
+Nulled values are simply excluded from the metrics that use them; dropped rows
+are removed entirely. To add another fixable name, append to `NAME_FIXES` in
+`global.R`.
 
 ## Pitch grouping (`PITCH_CATEGORY_MAP`, global.R)
 

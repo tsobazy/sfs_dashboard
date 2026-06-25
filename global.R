@@ -48,42 +48,69 @@ NAME_FIXES <- c(
 )
 
 clean_trackman_data <- function(d) {
-  n0 <- nrow(d)
+  n0  <- nrow(d)
+  cnt <- c(`Duplicate pitches` = 0, `Undated / unattributable rows` = 0,
+           `Name misspellings` = 0, `Bad pitch velocity` = 0,
+           `Bad spin rate` = 0, `Impossible pitch location` = 0,
+           `Mistracked exit velocity` = 0, `Bad launch angle` = 0,
+           `Bad hit distance` = 0, `Invalid ball/strike count` = 0,
+           `Invalid out count` = 0)
+  # helper: null values outside [lo, hi], return count nulled
+  null_oob <- function(v, lo, hi) {
+    if (is.null(v)) return(list(v = v, n = 0))
+    bad <- !is.na(v) & (v < lo | v > hi); v[bad] <- NA_real_
+    list(v = v, n = sum(bad))
+  }
 
-  # 1) Drop unusable rows with no Date — cannot be attributed to a game, and in
-  #    these files they also have no pitch tracking at all.
-  d <- d[!is.na(d$Date), , drop = FALSE]
-  dropped <- n0 - nrow(d)
+  # 1) Drop duplicate pitches (same PitchUID) — keep the first.
+  if ("PitchUID" %in% names(d)) {
+    dup <- duplicated(d$PitchUID) & !is.na(d$PitchUID)
+    cnt["Duplicate pitches"] <- sum(dup); d <- d[!dup, , drop = FALSE]
+  }
 
-  # 2) Fix known name misspellings on both Pitcher and Batter.
+  # 2) Drop rows that can't be attributed to a game/player (no Date/Pitcher/Batter).
+  drop_row <- is.na(d$Date) | is.na(d$Pitcher) | is.na(d$Batter)
+  cnt["Undated / unattributable rows"] <- sum(drop_row); d <- d[!drop_row, , drop = FALSE]
+
+  # 3) Fix known name misspellings so a player isn't split in two.
   fixn <- function(x) ifelse(x %in% names(NAME_FIXES), unname(NAME_FIXES[x]), x)
-  n_name <- sum(d$Batter %in% names(NAME_FIXES), d$Pitcher %in% names(NAME_FIXES))
-  d$Batter  <- fixn(d$Batter)
-  d$Pitcher <- fixn(d$Pitcher)
+  cnt["Name misspellings"] <- sum(d$Batter %in% names(NAME_FIXES),
+                                  d$Pitcher %in% names(NAME_FIXES))
+  d$Batter <- fixn(d$Batter); d$Pitcher <- fixn(d$Pitcher)
 
-  # 3) Null physically-impossible pitch locations (radar glitches several feet
-  #    off). Wild-but-plausible misses are kept; only clear errors are removed.
+  # 4) Null out-of-range continuous readings (radar/tracking glitches).
+  r <- null_oob(d$RelSpeed, 50, 105);  d$RelSpeed  <- r$v; cnt["Bad pitch velocity"] <- r$n
+  r <- null_oob(d$SpinRate, 500, 3500); d$SpinRate <- r$v; cnt["Bad spin rate"]      <- r$n
+  r <- null_oob(d$Angle,   -90, 90);   d$Angle     <- r$v; cnt["Bad launch angle"]   <- r$n
+  if ("Distance" %in% names(d)) { r <- null_oob(d$Distance, 0, 600); d$Distance <- r$v; cnt["Bad hit distance"] <- r$n }
+
+  # 5) Null physically-impossible pitch locations (both coords together).
   bad_loc <- !is.na(d$PlateLocSide) &
     (abs(d$PlateLocSide) > 3.5 | d$PlateLocHeight < -1 | d$PlateLocHeight > 6)
   bad_loc[is.na(bad_loc)] <- FALSE
-  d$PlateLocSide[bad_loc]   <- NA_real_
-  d$PlateLocHeight[bad_loc] <- NA_real_
+  d$PlateLocSide[bad_loc] <- NA_real_; d$PlateLocHeight[bad_loc] <- NA_real_
+  cnt["Impossible pitch location"] <- sum(bad_loc)
 
-  # 4) Null mistracked exit velocities on contact (sub-40 mph isn't a real
-  #    batted ball; >120 is impossible at this level). Angle goes with it.
-  bad_ev <- d$PitchCall == "InPlay" & !is.na(d$ExitSpeed) &
-    (d$ExitSpeed < 40 | d$ExitSpeed > 120)
+  # 6) Null mistracked exit velocities on contact (<40 not a real ball, >120 impossible).
+  bad_ev <- d$PitchCall == "InPlay" & !is.na(d$ExitSpeed) & (d$ExitSpeed < 40 | d$ExitSpeed > 120)
   bad_ev[is.na(bad_ev)] <- FALSE
-  d$ExitSpeed[bad_ev] <- NA_real_
-  d$Angle[bad_ev]     <- NA_real_
+  d$ExitSpeed[bad_ev] <- NA_real_; d$Angle[bad_ev] <- NA_real_
+  cnt["Mistracked exit velocity"] <- sum(bad_ev)
 
-  # 5) Null impossible out counts (>2 or <0).
-  bad_outs <- !is.na(d$Outs) & (d$Outs < 0 | d$Outs > 2)
-  d$Outs[bad_outs] <- NA_real_
+  # 7) Null impossible counts and out totals.
+  bad_cnt <- (!is.na(d$Balls) & (d$Balls < 0 | d$Balls > 3)) |
+             (!is.na(d$Strikes) & (d$Strikes < 0 | d$Strikes > 2))
+  d$Balls[!is.na(d$Balls) & (d$Balls < 0 | d$Balls > 3)]     <- NA_real_
+  d$Strikes[!is.na(d$Strikes) & (d$Strikes < 0 | d$Strikes > 2)] <- NA_real_
+  cnt["Invalid ball/strike count"] <- sum(bad_cnt)
+  bad_outs <- !is.na(d$Outs) & (d$Outs < 0 | d$Outs > 2); d$Outs[bad_outs] <- NA_real_
+  cnt["Invalid out count"] <- sum(bad_outs)
 
-  message(sprintf(
-    "Data clean: dropped %d undated rows; fixed %d names; nulled %d locations, %d exit velos, %d out-counts.",
-    dropped, n_name, sum(bad_loc), sum(bad_ev), sum(bad_outs)))
+  attr(d, "clean_summary") <- cnt
+  assign("DATA_CLEAN_SUMMARY", cnt, envir = globalenv())
+  message(sprintf("Data clean: %d rows dropped, %d field values corrected (%d total issues across %d pitches).",
+                  n0 - nrow(d), sum(cnt) - cnt["Duplicate pitches"] - cnt["Undated / unattributable rows"],
+                  sum(cnt), nrow(d)))
   d
 }
 
@@ -473,7 +500,8 @@ coach_sidebar <- function() {
       sliderInput("innings", "Innings", min = 1, max = 9,
                   value = c(1, 9), step = 1),
       hr(),
-      uiOutput("insights")
+      uiOutput("insights"),
+      uiOutput("data_quality_note")
     )
   )
 }

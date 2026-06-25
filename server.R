@@ -143,6 +143,30 @@ server <- function(input, output, session) {
     }
   })
 
+  # ── Data-quality note (auto-cleaning summary) ─────────────────────────────
+  clean_summary_rv <- reactiveVal(
+    if (exists("DATA_CLEAN_SUMMARY")) DATA_CLEAN_SUMMARY else NULL
+  )
+
+  output$data_quality_note <- renderUI({
+    s <- clean_summary_rv()
+    if (is.null(s)) return(NULL)
+    total <- sum(s)
+    if (total == 0)
+      return(div(style = "color:#94A3B8; font-size:11px; margin-top:4px;",
+                 "✓ Data verified — no errors found."))
+    breakdown <- paste(sprintf("%s: %d", names(s)[s > 0], s[s > 0]), collapse = "\n")
+    div(
+      style = "margin-top:6px; padding:8px 10px; background:#0e1f33;
+               border:1px solid rgba(255,255,255,0.12); border-radius:8px;",
+      title = breakdown,  # hover shows the per-type breakdown
+      div(style = "color:#2A9D8F; font-size:12px; font-weight:600;",
+          sprintf("✓ %d data errors auto-cleaned", total)),
+      div(style = "color:#94A3B8; font-size:10px; margin-top:2px;",
+          "Bad TrackMan readings removed before charts. Hover for details.")
+    )
+  })
+
   # pitch_types choices are static categories — no dynamic init needed
 
   # Updates player dropdown whenever main tab changes
@@ -1148,6 +1172,7 @@ server <- function(input, output, session) {
         levels = c("Fastball", "Breaking Ball", "Offspeed", "Undefined"))
       new_data$Season <- "Summer 2026"
       app_data(new_data)
+      if (exists("DATA_CLEAN_SUMMARY")) clean_summary_rv(DATA_CLEAN_SUMMARY)
 
       if (is.null(input$main_tabs) || input$main_tabs == "Pitching") {
         updatePickerInput(session, "player",
