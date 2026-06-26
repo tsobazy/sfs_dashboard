@@ -119,6 +119,20 @@ server <- function(input, output, session) {
     result_auth$player_type
   })
 
+  # Active view for a player. Pitchers and hitters are fixed; a two-way player
+  # toggles between the two via the "View" buttons in the sidebar (input$player_mode).
+  player_view <- reactive({
+    switch(user_player_type() %||% "hitter",
+      "pitcher" = "Pitching",
+      "two-way" = input$player_mode %||% "Pitching",
+      "Hitting")            # hitter (and any unknown type) -> Hitting
+  })
+
+  # Which roster column the active view keys its data on.
+  player_name_col <- reactive({
+    if (player_view() == "Pitching") "Pitcher" else "Batter"
+  })
+
   user_display_name <- reactive({
     req(result_auth$user)
     result_auth$display_name
@@ -255,9 +269,8 @@ server <- function(input, output, session) {
   player_fdata_base <- reactive({
     req(user_role() == "player")
     req(user_player_name())
-    ptype <- user_player_type()
     name  <- user_player_name()
-    col   <- if (ptype == "pitcher") "Pitcher" else "Batter"
+    col   <- player_name_col()
     app_data() %>%
       filter(.data[[col]] == name, TaggedPitchType != "Undefined")
   })
@@ -1237,7 +1250,7 @@ server <- function(input, output, session) {
   })
 
   player_selected_games <- reactive({
-    date_col  <- if (user_player_type() == "pitcher") "Pitcher" else "Batter"
+    date_col  <- player_name_col()
     all_dates <- app_data() %>%
       filter(.data[[date_col]] == user_player_name()) %>%
       pull(Date) %>% unique() %>% sort(decreasing = TRUE)
@@ -1250,7 +1263,7 @@ server <- function(input, output, session) {
 
   player_fdata <- reactive({
     req(!is.null(input$player_pitch_cats), length(input$player_pitch_cats) > 0)
-    date_col <- if (user_player_type() == "pitcher") "Pitcher" else "Batter"
+    date_col <- player_name_col()
     count_filter <- switch(input$player_count,
       "All"             = NULL,
       "Pitcher's Count" = PITCHER_COUNTS,
@@ -1269,7 +1282,7 @@ server <- function(input, output, session) {
     if (!is.null(count_filter))
       d <- d %>% filter(Count %in% count_filter)
 
-    if (user_player_type() %in% c("pitcher", "two-way"))
+    if (player_view() == "Pitching" && !is.null(input$player_innings))
       d <- d %>% filter(Inning >= input$player_innings[1],
                         Inning <= input$player_innings[2])
 
@@ -1339,7 +1352,7 @@ server <- function(input, output, session) {
   # Trend baseline: 5 most recent games not in the current window
   player_recent_fdata <- reactive({
     req(user_role() == "player")
-    date_col   <- if (user_player_type() == "pitcher") "Pitcher" else "Batter"
+    date_col   <- player_name_col()
     sel_dates  <- player_selected_games()
     all_dates  <- app_data() %>%
       filter(.data[[date_col]] == user_player_name()) %>%
@@ -1363,11 +1376,6 @@ server <- function(input, output, session) {
     position   <- if (nrow(roster_row) > 0) roster_row$position[1] else ""
 
     photo_tag  <- player_photo_tag(pname, size = "72px")
-
-    date_col   <- if (ptype == "pitcher") "Pitcher" else "Batter"
-    game_dates <- app_data() %>%
-      filter(.data[[date_col]] == pname) %>%
-      pull(Date) %>% unique() %>% sort(decreasing = TRUE)
 
     fluidPage(
       fluidRow(
@@ -1419,6 +1427,16 @@ server <- function(input, output, session) {
             div(style = "background:#ffffff; margin:0 10px 10px 10px;
                          padding:14px; border-radius:10px; flex:1; overflow-y:auto;",
 
+              # Two-way players switch between their pitching and hitting views.
+              # Stays visible on phones (not an analyst-only filter).
+              if (ptype == "two-way") tagList(
+                tags$label("View", style = "font-weight:600; font-size:12px;"),
+                radioGroupButtons("player_mode", label = NULL,
+                  choices  = c("Pitching", "Hitting"),
+                  selected = "Pitching", size = "sm", justified = TRUE),
+                tags$div(style = "height:10px;")
+              ),
+
               tags$label("Season", style = "font-weight:600; font-size:12px;"),
               selectInput("player_season", label = NULL,
                 choices = c("Summer 2026"), selected = "Summer 2026", width = "100%"),
@@ -1467,8 +1485,7 @@ server <- function(input, output, session) {
   # ── Player: content router ───────────────────────────────────────────────
   output$player_content <- renderUI({
     req(user_role() == "player")
-    ptype <- user_player_type()
-    if (ptype %in% c("pitcher", "two-way")) {
+    if (player_view() == "Pitching") {
       uiOutput("player_pitcher_section")
     } else {
       uiOutput("player_hitter_section")
@@ -2130,7 +2147,7 @@ server <- function(input, output, session) {
   # ── Player: hitter game log ───────────────────────────────────────────────
   output$player_hitter_game_log <- DT::renderDT({
     req(user_role() == "player")
-    req(user_player_type() == "hitter")
+    req(player_view() == "Hitting")
     d <- player_fdata_base() %>%
       group_by(Date) %>%
       summarise(
