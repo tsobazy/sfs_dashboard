@@ -1340,10 +1340,9 @@ server <- function(input, output, session) {
       filter(.data[[date_col]] == user_player_name()) %>%
       pull(Date) %>% unique() %>% sort(decreasing = TRUE)
 
-    switch(input$player_game_window,
-      "This Game" = selected_game(),
+    switch(input$player_game_window %||% "This Game",
       "Season"    = all_dates,
-      head(all_dates, 5L)   # "Last 5" default
+      selected_game()   # default: the currently navigated single game
     )
   })
 
@@ -1524,37 +1523,41 @@ server <- function(input, output, session) {
 
               tags$label("Games", style = "font-weight:600; font-size:12px; margin-top:8px; display:block;"),
               radioGroupButtons("player_game_window", label = NULL,
-                choices  = c("This Game", "Last 5", "Season"),
+                choices  = c("This Game", "Season"),
                 selected = "This Game", size = "sm", justified = TRUE),
               uiOutput("player_game_nav"),
 
-              hr(),
-
-              tags$label("Pitch Category", style = "font-weight:600; font-size:12px;"),
-              pickerInput("player_pitch_cats", label = NULL,
-                choices  = c("Fast" = "Fastball", "Breaking" = "Breaking Ball", "Off" = "Offspeed"),
-                selected = c("Fastball", "Breaking Ball", "Offspeed"),
-                multiple = TRUE,
-                options  = list(`actions-box` = TRUE)),
-
-              hr(),
-
-              tags$label("Count", style = "font-weight:600; font-size:12px;"),
-              selectInput("player_count", label = NULL,
-                choices  = c("All", "Pitcher's Count", "Hitter's Count", "2K"),
-                selected = "All", width = "100%"),
-
-              if (ptype %in% c("pitcher", "two-way")) tagList(
+              # Analyst-only filters — hidden on phones (see custom.css) so the
+              # player just navigates games; defaults show the full game.
+              div(class = "player-secondary-filters",
                 hr(),
-                tags$label("Innings", style = "font-weight:600; font-size:12px;"),
-                sliderInput("player_innings", label = NULL,
-                  min = 1, max = 9, value = c(1, 9), step = 1, width = "100%")
+
+                tags$label("Pitch Category", style = "font-weight:600; font-size:12px;"),
+                pickerInput("player_pitch_cats", label = NULL,
+                  choices  = c("Fast" = "Fastball", "Breaking" = "Breaking Ball", "Off" = "Offspeed"),
+                  selected = c("Fastball", "Breaking Ball", "Offspeed"),
+                  multiple = TRUE,
+                  options  = list(`actions-box` = TRUE)),
+
+                hr(),
+
+                tags$label("Count", style = "font-weight:600; font-size:12px;"),
+                selectInput("player_count", label = NULL,
+                  choices  = c("All", "Pitcher's Count", "Hitter's Count", "2K"),
+                  selected = "All", width = "100%"),
+
+                if (ptype %in% c("pitcher", "two-way")) tagList(
+                  hr(),
+                  tags$label("Innings", style = "font-weight:600; font-size:12px;"),
+                  sliderInput("player_innings", label = NULL,
+                    min = 1, max = 9, value = c(1, 9), step = 1, width = "100%")
+                )
               )
             )
           )
         ),
 
-        column(9, uiOutput("player_content"))
+        column(9, class = "player-content-col", uiOutput("player_content"))
       )
     )
   })
@@ -1610,7 +1613,7 @@ server <- function(input, output, session) {
       tabPanel("Overview",
         tags$h6("Pitching", style = "color:#0a1628; font-weight:600; margin:12px 0 8px;"),
         layout_columns(
-          col_widths = breakpoints(sm = 6, md = 3),
+          col_widths = breakpoints(xs = 6, sm = 6, md = 3),
           stat_tile(tagList("Strike%", metric_badge(spct, 0.65, 0.53)),
                     fmt(spct), tile_class(spct, 0.65, 0.53),
                     trend        = mk_trend(spct, spct_base),
@@ -1955,7 +1958,7 @@ server <- function(input, output, session) {
       tabPanel("Overview",
         tags$h6("Hitting", style = "color:#0a1628; font-weight:600; margin:12px 0 8px;"),
         layout_columns(
-          col_widths = breakpoints(sm = 6, md = 3),
+          col_widths = breakpoints(xs = 6, sm = 6, md = 3),
           stat_tile(tagList("Avg EV", metric_badge(avg_ev, 84, 73)),
                     fmt_ev(avg_ev), tile_class(avg_ev, 84, 73),
                     trend        = mk_trend_ev(avg_ev, avg_ev_base),

@@ -48,6 +48,39 @@
   padding-right: 0 !important;
 }
 
+/* ───────────────────────────────────────────────────────────────────
+   Mobile: PLAYER account (phones, ≤ 767px)
+   Make a player's own page clean and readable on a phone: the dark
+   sidebar must not fill the screen, analyst-only filters are hidden so
+   the player just flips through games, and the game nav is tappable.
+   ─────────────────────────────────────────────────────────────────── */
+@media (max-width: 767px) {
+  /* Sidebar shrinks to its content instead of a full-height column */
+  .player-sidebar-col > div { min-height: auto !important; }
+
+  /* Use the full phone width for both the sidebar and the stats */
+  .player-sidebar-col, .player-content-col {
+    padding-left: 8px !important;
+    padding-right: 8px !important;
+  }
+  .player-content-col { padding-top: 8px !important; }
+
+  /* Players don't need pitch/count/inning filters on a phone — their
+     full game shows by default. Inputs stay in the DOM (values intact). */
+  .player-secondary-filters { display: none !important; }
+
+  /* Big, thumb-friendly Prev / Next game buttons */
+  #prev_game, #next_game {
+    padding: 12px 0 !important;
+    font-size: 15px !important;
+    min-height: 44px;
+  }
+
+  /* Stat tiles a touch tighter so two fit per row */
+  .value-tile { padding: 12px 8px !important; }
+  .value-tile .tile-value { font-size: 26px !important; }
+}
+
 /* Hide Shiny/bslib floating full-screen and action buttons */
 .shiny-full-screen-enter,
 .bslib-full-screen-enter,
