@@ -24,5 +24,10 @@ all_fall_25.csv
 # Dev reference images (not part of the app)
 reference-*.png
 
+# Generated login handout (regenerate with make_login_handout.R) — contains
+# the full username/password list, so keep it out of the repo.
+seagulls_logins.pdf
+seagulls_qr.png
+
 # Claude Superpowers tooling artifacts
 docs/superpowers/

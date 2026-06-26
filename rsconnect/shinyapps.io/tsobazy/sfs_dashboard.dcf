@@ -1,0 +1,10 @@
+name: sfs_dashboard
+title: SF Seagulls Dashboard
+username: tsobazy
+account: tsobazy
+server: shinyapps.io
+hostUrl: https://api.shinyapps.io/v1
+appId: 17556931
+bundleId: 12185569
+url: https://tsobazy.shinyapps.io/sfs_dashboard/
+version: 1
