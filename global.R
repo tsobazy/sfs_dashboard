@@ -47,6 +47,32 @@ NAME_FIXES <- c(
   "Ramierz, Alan" = "Ramirez, Alan"
 )
 
+# TrackMan reports names as "Last, First", but the roster (the identity source
+# for logins, photos, and positions) uses "First Last". We normalize the data to
+# the roster's format on load so player filters and roster joins actually match;
+# without this every player's portal shows "no games". Keyed by the flipped
+# "First Last" form, these aliases reconcile nicknames/short forms that TrackMan
+# uses with the formal roster names (each last name is unique on the roster).
+NAME_ALIASES <- c(
+  "AJ Hurtado"    = "Armando Hurtado",
+  "Matt Potter"   = "Matthew Potter",
+  "Joe Steidel"   = "Joseph Steidel",
+  "John Ferreira" = "JB Ferreira",
+  "Jacob Brewer"  = "Jake Brewer"
+)
+
+# "Last, First" -> "First Last", then apply the roster aliases above. Names with
+# no comma (already flipped, or single-token) pass through unchanged.
+normalize_player_name <- function(x) {
+  has_comma <- grepl(",", x)
+  out <- x
+  parts <- strsplit(x[has_comma], ",\\s*")
+  out[has_comma] <- vapply(parts, function(p)
+    if (length(p) >= 2) paste(trimws(p[2]), trimws(p[1])) else trimws(p[1]),
+    character(1))
+  ifelse(out %in% names(NAME_ALIASES), unname(NAME_ALIASES[out]), out)
+}
+
 clean_trackman_data <- function(d) {
   n0  <- nrow(d)
   cnt <- c(`Duplicate pitches` = 0, `Undated / unattributable rows` = 0,
@@ -77,6 +103,11 @@ clean_trackman_data <- function(d) {
   cnt["Name misspellings"] <- sum(d$Batter %in% names(NAME_FIXES),
                                   d$Pitcher %in% names(NAME_FIXES))
   d$Batter <- fixn(d$Batter); d$Pitcher <- fixn(d$Pitcher)
+
+  # 3b) Normalize names to the roster's "First Last" format so player filters and
+  #     roster joins match. Format-only, not an error fix, so it isn't counted.
+  d$Batter <- normalize_player_name(d$Batter)
+  d$Pitcher <- normalize_player_name(d$Pitcher)
 
   # 4) Null out-of-range continuous readings (radar/tracking glitches).
   r <- null_oob(d$RelSpeed, 50, 105);  d$RelSpeed  <- r$v; cnt["Bad pitch velocity"] <- r$n
