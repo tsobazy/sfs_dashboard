@@ -12,7 +12,7 @@ credentials <- data.frame(
     "caleb_garrison", "marcus_graham", "connor_wood", "taylor_easthope",
     "derek_waldvogel", "tanner_wall", "armando_hurtado", "brandon_swanson",
     "christian_lamothe", "jb_ferreira", "kai_hanasaki", "branson_derrington",
-    "camren_boyd", "luka_shah", "alan_ramirez"
+    "camren_boyd", "luka_shah", "alan_ramirez", "george_schmitt"
   ),
   password = c(
     # Staff
@@ -20,11 +20,11 @@ credentials <- data.frame(
     # Players (default = jersey number as string)
     "1", "3", "6", "7", "9", "12", "13", "14", "16", "17", "20", "22",
     "25", "26", "29", "30", "31", "32", "34", "35", "36", "37", "38",
-    "39", "40", "43", "50", "53", "54", "55", "56"
+    "39", "40", "43", "50", "53", "54", "55", "56", "18"
   ),
   role = c(
     rep("coach", 2),
-    rep("player", 31)
+    rep("player", 32)
   ),
   display_name = c(
     "Coach", "Analytics",
@@ -35,7 +35,7 @@ credentials <- data.frame(
     "Caleb Garrison", "Marcus Graham", "Connor Wood", "Taylor Easthope",
     "Derek Waldvogel", "Tanner Wall", "Armando Hurtado", "Brandon Swanson",
     "Christian LaMothe", "JB Ferreira", "Kai Hanasaki", "Branson Derrington",
-    "Camren Boyd", "Luka Shah", "Alan Ramirez"
+    "Camren Boyd", "Luka Shah", "Alan Ramirez", "George Schmitt"
   ),
   player_name = c(
     rep(NA_character_, 2),
@@ -46,7 +46,7 @@ credentials <- data.frame(
     "Caleb Garrison", "Marcus Graham", "Connor Wood", "Taylor Easthope",
     "Derek Waldvogel", "Tanner Wall", "Armando Hurtado", "Brandon Swanson",
     "Christian LaMothe", "JB Ferreira", "Kai Hanasaki", "Branson Derrington",
-    "Camren Boyd", "Luka Shah", "Alan Ramirez"
+    "Camren Boyd", "Luka Shah", "Alan Ramirez", "George Schmitt"
   ),
   player_type = c(
     rep(NA_character_, 2),
@@ -56,13 +56,13 @@ credentials <- data.frame(
     "hitter", "pitcher", "hitter", "pitcher", "pitcher",
     "hitter", "hitter", "hitter", "hitter", "hitter",
     "pitcher", "pitcher", "pitcher", "pitcher", "pitcher",
-    "hitter"
+    "hitter", "two-way"
   ),
   jersey = c(
     rep(NA_integer_, 2),
     1L, 3L, 6L, 7L, 9L, 12L, 13L, 14L, 16L, 17L, 20L, 22L,
     25L, 26L, 29L, 30L, 31L, 32L, 34L, 35L, 36L, 37L, 38L,
-    39L, 40L, 43L, 50L, 53L, 54L, 55L, 56L
+    39L, 40L, 43L, 50L, 53L, 54L, 55L, 56L, 18L
   ),
   stringsAsFactors = FALSE
 )
@@ -76,7 +76,7 @@ roster_positions <- data.frame(
     "Caleb Garrison", "Marcus Graham", "Connor Wood", "Taylor Easthope",
     "Derek Waldvogel", "Tanner Wall", "Armando Hurtado", "Brandon Swanson",
     "Christian LaMothe", "JB Ferreira", "Kai Hanasaki", "Branson Derrington",
-    "Camren Boyd", "Luka Shah", "Alan Ramirez"
+    "Camren Boyd", "Luka Shah", "Alan Ramirez", "George Schmitt"
   ),
   position = c(
     "INF", "INF", "RHP", "INF", "OF",
@@ -85,12 +85,12 @@ roster_positions <- data.frame(
     "C", "RHP", "C/OF", "RHP", "LHP",
     "1B/OF", "INF/OF", "C/OF", "INF", "INF",
     "RHP", "RHP", "RHP", "LHP", "RHP",
-    "INF"
+    "INF", "OF/LHP"
   ),
   jersey = c(
     1L, 3L, 6L, 7L, 9L, 12L, 13L, 14L, 16L, 17L, 20L, 22L,
     25L, 26L, 29L, 30L, 31L, 32L, 34L, 35L, 36L, 37L, 38L,
-    39L, 40L, 43L, 50L, 53L, 54L, 55L, 56L
+    39L, 40L, 43L, 50L, 53L, 54L, 55L, 56L, 18L
   ),
   stringsAsFactors = FALSE
 )
