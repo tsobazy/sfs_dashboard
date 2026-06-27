@@ -17,7 +17,7 @@ library(rsconnect)
 # .git, RStudio cruft, setup scripts, and dev images stay out of the bundle.
 app_files <- c(
   # App code
-  "ui.R", "server.R", "global.R", "roster.R", "sync_drive.R",
+  "ui.R", "server.R", "global.R", "roster.R", "sync_drive.R", "schedule.R",
   # Static assets (CSS, logo, player photos)
   "www",
   # Logins (shinymanager) — required for the password screen
