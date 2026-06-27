@@ -40,9 +40,22 @@ build_combined_csv <- function(game_csv_dir = GAME_CSV_DIR,
   if (length(csv_files) == 0)
     stop("No CSV files found in ", game_csv_dir)
 
-  combined <- dplyr::bind_rows(
-    lapply(csv_files, readr::read_csv, show_col_types = FALSE)
-  )
+  # TrackMan's internal Date column is sometimes wrong, but the export filename
+  # carries a reliable "YYYYMMDD-..." date prefix. Trust the filename: override
+  # every row's Date with the date parsed from its source filename. Files without
+  # a valid prefix keep their internal Date (logged, not dropped).
+  read_one <- function(path) {
+    d <- readr::read_csv(path, show_col_types = FALSE)
+    pre <- regmatches(basename(path), regexpr("^\\d{8}", basename(path)))
+    if (length(pre) == 1L) {
+      d$Date <- as.Date(pre, "%Y%m%d")
+    } else {
+      message("build_combined_csv: no date prefix on '", basename(path),
+              "', keeping internal Date")
+    }
+    d
+  }
+  combined <- dplyr::bind_rows(lapply(csv_files, read_one))
 
   combined$TaggedPitchType <- dplyr::if_else(
     combined$TaggedPitchType %in% c("Other", NA_character_),
