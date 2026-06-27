@@ -83,9 +83,11 @@ fetch_schedule <- function(url = SCHEDULE_URL) {
   )
 }
 
-# Local NULL-coalescing helper (shiny exports `%||%`, but schedule.R is also
-# sourced by tests without shiny loaded).
-`%||%` <- function(a, b) if (is.null(a) || length(a) == 0) b else a
+# Local NULL-coalescing helper, only defined when shiny's `%||%` isn't already
+# present (tests source schedule.R without shiny). Never overrides shiny's.
+if (!exists("%||%")) {
+  `%||%` <- function(a, b) if (is.null(a) || length(a) == 0) b else a
+}
 
 # Match a schedule tibble against the CSV files present. Returns
 #   list(games = <schedule + data_status, n_csv>, orphans = <chr>)
