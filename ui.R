@@ -17,7 +17,26 @@ ui <- secure_app(
                style = "display:block; margin:0 auto 12px auto;"),
       tags$h3("Welcome to Seagulls Analytics",
               style = "color:#015294; font-weight:700; margin:0;")
-    )
+    ),
+    # Fix: pressing Enter in the login fields submitted before the last keystroke
+    # flushed to the server, so shinymanager auth-checked a stale password and
+    # showed the "incorrect" error. Intercept Enter in the capture phase (so it
+    # runs before shinymanager's own handler), blur the field to force the value
+    # to flush, then click Sign In once the value has been sent.
+    tags$script(HTML("
+      document.addEventListener('keydown', function(e) {
+        if (e.which !== 13 && e.key !== 'Enter') return;
+        var t = e.target;
+        if (!t || (t.id !== 'auth-user_id' && t.id !== 'auth-user_pwd')) return;
+        e.preventDefault();
+        e.stopPropagation();
+        t.blur();
+        setTimeout(function() {
+          var btn = document.getElementById('auth-go_auth');
+          if (btn) btn.click();
+        }, 150);
+      }, true);
+    "))
   ),
   tags_bottom = tagList(
     tags$div(
