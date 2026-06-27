@@ -5,6 +5,6 @@ account: tsobazy
 server: shinyapps.io
 hostUrl: https://api.shinyapps.io/v1
 appId: 17556931
-bundleId: 12185569
+bundleId: 12186143
 url: https://tsobazy.shinyapps.io/sfs_dashboard/
 version: 1
