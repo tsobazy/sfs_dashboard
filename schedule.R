@@ -32,11 +32,13 @@ parse_schedule <- function(doc) {
   date_re <- "[0-9]{8}"
   digits_re <- "[^0-9]"
 
-  dates <- as.Date(rep(NA_real_, length(recs)), origin = "1970-01-01")
-  last  <- as.Date(NA)
+  dates   <- as.Date(rep(NA_real_, length(recs)), origin = "1970-01-01")
+  has_box <- logical(length(recs))
+  last    <- as.Date(NA)
   for (i in seq_along(recs)) {
     b <- recs[[i]]$box
     if (!is.na(b) && grepl(date_re, b)) {
+      has_box[i] <- TRUE
       d <- as.Date(regmatches(b, regexpr(date_re, b)), "%Y%m%d")
     } else if (grepl("Today", recs[[i]]$daytx %||% "", ignore.case = TRUE)) {
       d <- Sys.Date()   # schedule is fetched live, so "Today" is the current date
@@ -62,7 +64,9 @@ parse_schedule <- function(doc) {
   home_away <- ifelse(grepl("^vs", badge), "Home",
                 ifelse(grepl("^at", badge), "Away", NA_character_))
   result    <- ifelse(nzchar(res_raw) & grepl("^[WLT],", res_raw), res_raw, NA_character_)
-  played    <- !is.na(result)
+  # A game is "played" once it has a boxscore — a reliable signal that survives
+  # even when the result text doesn't come through (some hosts strip it).
+  played    <- has_box
 
   out <- tibble::tibble(
     date = dates, opponent = opp, home_away = home_away,
@@ -73,14 +77,23 @@ parse_schedule <- function(doc) {
 }
 
 # Fetch + parse the live schedule. Returns NULL on any failure so callers can
-# show "schedule unavailable" without the app crashing.
+# show "schedule unavailable" without the app crashing. Sends a browser
+# User-Agent so the host serves the full page (some strip content for default
+# clients), falling back to a plain read_html if that path errors.
+SCHEDULE_UA <- paste0(
+  "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 ",
+  "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+
 fetch_schedule <- function(url = SCHEDULE_URL) {
-  tryCatch(
-    parse_schedule(rvest::read_html(url)),
-    error = function(e) {
-      message("schedule fetch failed: ", conditionMessage(e)); NULL
-    }
-  )
+  tryCatch({
+    doc <- tryCatch({
+      resp <- httr2::req_perform(httr2::req_user_agent(httr2::request(url), SCHEDULE_UA))
+      rvest::read_html(httr2::resp_body_string(resp))
+    }, error = function(e) rvest::read_html(url))
+    parse_schedule(doc)
+  }, error = function(e) {
+    message("schedule fetch failed: ", conditionMessage(e)); NULL
+  })
 }
 
 # Local NULL-coalescing helper, only defined when shiny's `%||%` isn't already
