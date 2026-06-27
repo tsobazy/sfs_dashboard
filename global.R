@@ -7,6 +7,7 @@ library(plotly)
 library(DT)
 library(shinymanager)
 library(scales)
+library(rvest)
 
 # Customise shinymanager login screen labels
 shinymanager::set_labels(
@@ -24,6 +25,7 @@ shinymanager::set_labels(
 # (offline, expired token, empty folder) is caught so the app still boots on the
 # CSVs already present locally.
 source("sync_drive.R")
+source("schedule.R")   # fetch_schedule(), build_coverage(), SCHEDULE_URL
 local({
   folder_id <- Sys.getenv("SEAGULLS_DRIVE_FOLDER_ID")
   if (nchar(folder_id) == 0 || !dir.exists(".secrets")) return(invisible())
@@ -655,6 +657,10 @@ coach_layout <- function() {
               fluidRow(column(12, plotlyOutput("plot_quality_contact", height = "420px")))
             )
           )
+        ),
+        tabPanel(
+          "Schedule",
+          uiOutput("coach_schedule_ui")
         )
       )
     )

@@ -66,6 +66,73 @@ server <- function(input, output, session) {
 
   app_data <- reactiveVal(data)
 
+  # ── Schedule + CSV coverage ───────────────────────────────────────────────
+  # Live-fetched once at startup (NULL if the site is unreachable). Refreshed by
+  # the coach "Sync Data from Drive" button. coverage() joins it to the CSVs we
+  # have so the UI can flag scheduled games with no data.
+  schedule_rv <- reactiveVal(fetch_schedule())
+  coverage <- reactive({
+    s <- schedule_rv()
+    if (is.null(s)) return(NULL)
+    build_coverage(s, list.files(GAME_CSV_DIR, pattern = "\\.csv$", full.names = TRUE))
+  })
+
+  output$coach_schedule_ui <- renderUI({
+    cov <- coverage()
+    if (is.null(cov)) {
+      return(div(style = "padding:16px; color:#64748b;",
+        tags$h5("Schedule", style = "color:#0a1628; font-weight:700;"),
+        tags$p("Schedule unavailable — could not reach collegeseagulls.com. ",
+               "The rest of the dashboard is unaffected; try the ",
+               tags$b("Sync Data from Drive"), " button to retry.")))
+    }
+    g <- cov$games
+    n_tracked <- sum(g$data_status == "tracked")
+    n_played  <- sum(g$played)
+
+    status_cell <- function(st, n) {
+      if (st == "tracked")
+        tags$span(paste0("✓ ", n, " file", if (n > 1) "s" else ""),
+                  style = "color:#2A9D8F; font-weight:600;")
+      else if (st == "No CSV")
+        tags$span("No CSV", style = "color:#C0392B; font-weight:700;")
+      else
+        tags$span("upcoming", style = "color:#94a3b8;")
+    }
+    row_bg <- function(st) if (st == "No CSV") "background:#FDECEA;" else ""
+
+    rows <- lapply(seq_len(nrow(g)), function(i) {
+      tags$tr(style = row_bg(g$data_status[i]),
+        tags$td(format(g$date[i], "%a %b %d"), style = "padding:6px 10px; white-space:nowrap;"),
+        tags$td(g$opponent[i], style = "padding:6px 10px;"),
+        tags$td(g$home_away[i], style = "padding:6px 10px;"),
+        tags$td(if (is.na(g$result[i])) "" else g$result[i], style = "padding:6px 10px; color:#475569;"),
+        tags$td(status_cell(g$data_status[i], g$n_csv[i]), style = "padding:6px 10px;"))
+    })
+
+    tagList(
+      tags$h5("Schedule & Data Coverage",
+              style = "color:#0a1628; font-weight:700; margin:4px 0 2px;"),
+      tags$p(sprintf("Tracked %d of %d played games. Games with no CSV are highlighted.",
+                     n_tracked, n_played),
+             style = "color:#475569; font-size:13px; margin:0 0 10px;"),
+      tags$table(style = "border-collapse:collapse; width:100%; font-size:13px;",
+        tags$thead(tags$tr(style = "border-bottom:2px solid #e2e8f0; text-align:left;",
+          tags$th("Date", style = "padding:6px 10px;"),
+          tags$th("Opponent", style = "padding:6px 10px;"),
+          tags$th("H/A", style = "padding:6px 10px;"),
+          tags$th("Result", style = "padding:6px 10px;"),
+          tags$th("Data", style = "padding:6px 10px;"))),
+        tags$tbody(rows)),
+      if (length(cov$orphans) > 0) div(
+        style = "margin-top:14px; padding:10px 12px; background:#FFF7ED;
+                 border:1px solid #FED7AA; border-radius:8px; font-size:12px; color:#9A3412;",
+        tags$b("Unmatched CSV files "),
+        "(date doesn't match any scheduled game — check the filename date): ",
+        paste(cov$orphans, collapse = ", "))
+    )
+  })
+
   # ── Season / game window reactives ────────────────────────────────────────
   season_games <- reactive({
     req(input$season)
@@ -1185,6 +1252,7 @@ server <- function(input, output, session) {
         levels = c("Fastball", "Breaking Ball", "Offspeed", "Undefined"))
       new_data$Season <- "Summer 2026"
       app_data(new_data)
+      schedule_rv(fetch_schedule())   # refresh coverage against newly synced CSVs
       if (exists("DATA_CLEAN_SUMMARY")) clean_summary_rv(DATA_CLEAN_SUMMARY)
 
       if (is.null(input$main_tabs) || input$main_tabs == "Pitching") {
