@@ -51,13 +51,14 @@ test_that("chase_pct returns NA when no OOZ pitches", {
 })
 
 test_that("hard_hit_pct calculates correctly", {
-  ev <- c(97, 85, 100, 90, 95)
-  # >= 95: indices 1, 3, 5 = 3 of 5
+  ev <- c(97, 80, 100, 84, 95)
+  # HARD_HIT_MPH = 85: 97, 100, 95 qualify = 3 of 5
   expect_equal(hard_hit_pct(ev), 3/5)
 })
 
 test_that("hard_hit_pct ignores NAs", {
-  ev <- c(97, NA, 85, 95)
+  ev <- c(97, NA, 80, 95)
+  # ignores NA; of 97, 80, 95 the ones >= 85 are 97 and 95 = 2 of 3
   expect_equal(hard_hit_pct(ev), 2/3)
 })
 
