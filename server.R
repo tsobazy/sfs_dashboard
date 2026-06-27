@@ -851,6 +851,7 @@ server <- function(input, output, session) {
           ExitSpeed[PitchCall == "InPlay"],
           Angle[PitchCall == "InPlay"]
         ),
+        avg_la = mean(Angle[PitchCall == "InPlay"], na.rm = TRUE),
         .groups = "drop"
       ) %>%
       mutate(
@@ -866,7 +867,7 @@ server <- function(input, output, session) {
       left_join(roster_positions[, c("player_name","position")],
                 by = c("Batter" = "player_name")) %>%
       select(Batter, Position = position, PA, AVG, OBP, SLG,
-             `K%`, `BB%`, `BB/K`, `Avg EV` = avg_ev,
+             `K%`, `BB%`, `BB/K`, `Avg EV` = avg_ev, `Avg LA` = avg_la,
              `Hard Hit%` = hh_pct, `Barrel%` = brl_pct)
 
     datatable(d,
@@ -877,6 +878,7 @@ server <- function(input, output, session) {
       formatRound("BB/K", digits = 2) %>%
       formatPercentage(c("K%","BB%","Hard Hit%","Barrel%"), digits = 1) %>%
       formatRound("Avg EV", digits = 1) %>%
+      formatRound("Avg LA", digits = 0) %>%
       formatStyle("PA",
         target    = "row",
         color     = styleInterval(14, c("#aaaaaa", "inherit")),
@@ -1181,6 +1183,7 @@ server <- function(input, output, session) {
     avg_ev <- mean(d_ip$ExitSpeed, na.rm = TRUE)
     hh     <- hard_hit_pct(d_ip$ExitSpeed)
     brl    <- barrel_pct(d_ip$ExitSpeed, d_ip$Angle)
+    avg_la <- mean(d_ip$Angle, na.rm = TRUE)
 
     team_avgs <- d %>%
       group_by(Batter) %>%
@@ -1196,6 +1199,7 @@ server <- function(input, output, session) {
     tavg <- if (team_avgs$total_AB > 0) team_avgs$total_H / team_avgs$total_AB else NA_real_
 
     fmt_ev  <- function(x) if (is.na(x)) "—" else paste0(round(x, 1), " mph")
+    fmt_la  <- function(x) if (is.na(x)) "—" else paste0(round(x), "°")
     fmt_pct <- function(x) if (is.na(x)) "—" else scales::percent(x, accuracy = 1)
     fmt_avg <- function(x) if (is.na(x)) "—" else formatC(x, digits = 3, format = "f")
 
@@ -1206,7 +1210,9 @@ server <- function(input, output, session) {
         stat_tile("AVG",       fmt_avg(tavg),  tile_class(tavg,   0.300, 0.220)),
         stat_tile("Hard Hit%", fmt_pct(hh),    tile_class(hh,     0.50,  0.30)),
         stat_tile("Barrel%",   fmt_pct(brl),   tile_class(brl,    0.12,  0.04)),
-        stat_tile("Avg EV",    fmt_ev(avg_ev), tile_class(avg_ev, 84,    73))
+        stat_tile("Avg EV",    fmt_ev(avg_ev), tile_class(avg_ev, 84,    73)),
+        # Launch angle shown neutral — the productive range is a mid-band, not a max.
+        stat_tile("Avg LA",    fmt_la(avg_la))
       )
     )
   })
@@ -1903,6 +1909,7 @@ server <- function(input, output, session) {
     d_ip   <- d %>% filter(PitchCall == "InPlay", !is.na(ExitSpeed))
     avg_ev <- mean(d_ip$ExitSpeed, na.rm = TRUE)
     hh     <- hard_hit_pct(d_ip$ExitSpeed)
+    avg_la <- mean(d_ip$Angle, na.rm = TRUE)
 
     d_zone  <- d %>% filter(!is.na(PlateLocSide), !is.na(PlateLocHeight))
     in_zone <- d_zone$PlateLocSide  >= SZ_LEFT & d_zone$PlateLocSide  <= SZ_RIGHT &
@@ -1914,6 +1921,7 @@ server <- function(input, output, session) {
     chase      <- if (sum(ooz) > 0) sum(ooz & swings) / sum(ooz) else NA_real_
 
     fmt_ev  <- function(x) if (is.na(x)) "—" else paste0(round(x, 1), " mph")
+    fmt_la  <- function(x) if (is.na(x)) "—" else paste0(round(x), "°")
     fmt_pct <- function(x) if (is.na(x)) "—" else scales::percent(x, accuracy = 1)
 
     # Trend baseline from last 5 games
@@ -1981,7 +1989,9 @@ server <- function(input, output, session) {
           stat_tile(tagList("Chase%", metric_badge(chase, 0.22, 0.32, hi_good = FALSE)),
                     fmt_pct(chase), tile_class(chase, 0.22, 0.32, hi_good = FALSE),
                     trend        = mk_trend(chase, chase_base),
-                    tooltip_text = "Chase rate — how often you swung at pitches outside the zone. MLB avg ~30%; lower is better.")
+                    tooltip_text = "Chase rate — how often you swung at pitches outside the zone. MLB avg ~30%; lower is better."),
+          stat_tile("Avg LA", fmt_la(avg_la),
+                    tooltip_text = "Average launch angle on balls in play. The productive range is roughly 10-25°; ground balls are lower, popups higher.")
         ),
         layout_columns(
           col_widths = breakpoints(sm = 12, md = 6),
@@ -2245,6 +2255,7 @@ server <- function(input, output, session) {
         BB          = sum(KorBB == "Walk",      na.rm = TRUE),
         K           = sum(KorBB == "Strikeout", na.rm = TRUE),
         `Avg EV`    = round(mean(ExitSpeed[PitchCall == "InPlay"], na.rm = TRUE), 1),
+        `Avg LA`    = round(mean(Angle[PitchCall == "InPlay"], na.rm = TRUE)),
         `Hard Hit%` = hard_hit_pct(ExitSpeed[PitchCall == "InPlay"]),
         .groups = "drop"
       ) %>%
@@ -2257,8 +2268,9 @@ server <- function(input, output, session) {
     ) %>%
       DT::formatPercentage("Hard Hit%", digits = 1) %>%
       DT::formatRound("Avg EV", digits = 1) %>%
+      DT::formatRound("Avg LA", digits = 0) %>%
       DT::formatStyle("Date", textAlign = "left") %>%
-      DT::formatStyle(c("PA","H","HR","BB","K","Avg EV","Hard Hit%"),
+      DT::formatStyle(c("PA","H","HR","BB","K","Avg EV","Avg LA","Hard Hit%"),
                       textAlign = "center")
   })
 
