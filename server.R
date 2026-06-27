@@ -1553,11 +1553,31 @@ server <- function(input, output, session) {
   # ── Player: content router ───────────────────────────────────────────────
   output$player_content <- renderUI({
     req(user_role() == "player")
-    if (player_view() == "Pitching") {
-      uiOutput("player_pitcher_section")
-    } else {
-      uiOutput("player_hitter_section")
-    }
+    tagList(
+      uiOutput("player_missing_csv_note"),
+      if (player_view() == "Pitching") {
+        uiOutput("player_pitcher_section")
+      } else {
+        uiOutput("player_hitter_section")
+      }
+    )
+  })
+
+  # Team-level heads-up: scheduled games that have no CSV at all (not
+  # player-specific). Omitted entirely if the schedule is unavailable.
+  output$player_missing_csv_note <- renderUI({
+    req(user_role() == "player")
+    cov <- coverage()
+    if (is.null(cov)) return(NULL)
+    miss <- cov$games[cov$games$data_status == "No CSV", ]
+    if (nrow(miss) == 0) return(NULL)
+    lab <- paste0(format(miss$date, "%b %d"), " ",
+                  ifelse(miss$home_away == "Home", "vs ", "@ "), miss$opponent)
+    div(style = "margin:0 0 14px; padding:9px 12px; background:#FFF7ED;
+                 border:1px solid #FED7AA; border-radius:8px;
+                 font-size:12px; color:#9A3412;",
+      tags$b("Missing game data (no CSV yet): "),
+      paste(lab, collapse = ", "))
   })
 
   # ── Player: pitcher section ───────────────────────────────────────────────
