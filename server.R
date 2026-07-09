@@ -66,6 +66,47 @@ server <- function(input, output, session) {
 
   app_data <- reactiveVal(data)
 
+  # Re-reads the freshly rebuilt all_fall_25.csv and applies the same transforms
+  # as global.R, then pushes it into app_data() and refreshes schedule coverage.
+  # Shared by the coach "Sync Data" button and the 5-minute auto-sync below.
+  # Returns the cleaned data frame (the button uses it to update the picker).
+  reload_app_data <- function() {
+    new_data <- readr::read_csv("all_fall_25.csv", show_col_types = FALSE)
+    new_data <- clean_trackman_data(new_data)
+    new_data$TaggedPitchType <- dplyr::if_else(
+      new_data$TaggedPitchType %in% c("Other", NA_character_),
+      "Undefined", new_data$TaggedPitchType
+    )
+    new_data$Count         <- paste0(new_data$Balls, "-", new_data$Strikes)
+    new_data$PitchCategory <- PITCH_CATEGORY_MAP[new_data$TaggedPitchType]
+    new_data$PitchCategory[is.na(new_data$PitchCategory)] <- "Undefined"
+    new_data$PitchCategory <- factor(new_data$PitchCategory,
+      levels = c("Fastball", "Breaking Ball", "Offspeed", "Undefined"))
+    new_data$Season <- "Summer 2026"
+    app_data(new_data)
+    schedule_rv(fetch_schedule())   # refresh coverage against newly synced CSVs
+    if (exists("DATA_CLEAN_SUMMARY")) clean_summary_rv(DATA_CLEAN_SUMMARY)
+    new_data
+  }
+
+  # ── Auto-sync from Drive every 5 minutes ──────────────────────────────────
+  # The app syncs once on startup (global.R); this keeps a long-lived session
+  # fresh as new games land, without the coach clicking "Sync Data". It only
+  # reloads when new files actually arrived, and never touches the player picker
+  # so it can't disrupt whatever the user is currently viewing.
+  autosync_timer <- reactiveTimer(5 * 60 * 1000)
+  observe({
+    autosync_timer()
+    folder_id <- Sys.getenv("SEAGULLS_DRIVE_FOLDER_ID")
+    if (nchar(folder_id) == 0) return()
+    tryCatch({
+      if (sync_from_drive(folder_id) > 0) {
+        build_combined_csv()
+        reload_app_data()
+      }
+    }, error = function(e) message("auto-sync failed: ", conditionMessage(e)))
+  })
+
   # ── Schedule + CSV coverage ───────────────────────────────────────────────
   # Live-fetched once at startup (NULL if the site is unreachable). Refreshed by
   # the coach "Sync Data from Drive" button. coverage() joins it to the CSVs we
@@ -1245,21 +1286,7 @@ server <- function(input, output, session) {
       n_new  <- sync_from_drive(folder_id)
       n_rows <- build_combined_csv()
 
-      new_data <- readr::read_csv("all_fall_25.csv", show_col_types = FALSE)
-      new_data <- clean_trackman_data(new_data)
-      new_data$TaggedPitchType <- dplyr::if_else(
-        new_data$TaggedPitchType %in% c("Other", NA_character_),
-        "Undefined", new_data$TaggedPitchType
-      )
-      new_data$Count        <- paste0(new_data$Balls, "-", new_data$Strikes)
-      new_data$PitchCategory <- PITCH_CATEGORY_MAP[new_data$TaggedPitchType]
-      new_data$PitchCategory[is.na(new_data$PitchCategory)] <- "Undefined"
-      new_data$PitchCategory <- factor(new_data$PitchCategory,
-        levels = c("Fastball", "Breaking Ball", "Offspeed", "Undefined"))
-      new_data$Season <- "Summer 2026"
-      app_data(new_data)
-      schedule_rv(fetch_schedule())   # refresh coverage against newly synced CSVs
-      if (exists("DATA_CLEAN_SUMMARY")) clean_summary_rv(DATA_CLEAN_SUMMARY)
+      new_data <- reload_app_data()
 
       if (is.null(input$main_tabs) || input$main_tabs == "Pitching") {
         updatePickerInput(session, "player",
