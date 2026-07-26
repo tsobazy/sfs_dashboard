@@ -530,6 +530,23 @@ coach_sidebar <- function() {
       selectInput("count", "Count",
         choices  = c("All", "Pitcher's Count", "Hitter's Count", "2K"),
         selected = "All"),
+      # Batter platoon split by pitcher's throwing hand — only meaningful on
+      # the Hitting tab (on Pitching, PitcherThrows is our own pitcher's hand).
+      conditionalPanel(
+        condition = "input.main_tabs == 'Hitting'",
+        selectInput("hand_split", "Pitcher Hand",
+          choices  = c("All", "vs LHP", "vs RHP"),
+          selected = "All")
+      ),
+      # On Pitching, split our own pitchers by throwing hand. Mixing LHP and
+      # RHP averages horizontal break toward zero and flattens the movement
+      # profile — splitting keeps each hand's break intact.
+      conditionalPanel(
+        condition = "input.main_tabs == 'Pitching'",
+        selectInput("pitch_hand_split", "Pitcher Hand",
+          choices  = c("All", "LHP", "RHP"),
+          selected = "All")
+      ),
       sliderInput("innings", "Innings", min = 1, max = 9,
                   value = c(1, 9), step = 1),
       hr(),

@@ -335,10 +335,23 @@ server <- function(input, output, session) {
       d <- d %>% filter(PitcherTeam %in% SEAGULLS_TEAM)
       if (!is.null(input$player) && input$player != "All Players")
         d <- d %>% filter(Pitcher == input$player)
+      # Split our pitchers by throwing hand (LHP / RHP) so mixed-handed
+      # aggregates don't cancel horizontal break in the movement profile.
+      d <- switch(input$pitch_hand_split %||% "All",
+        "LHP" = d %>% filter(PitcherThrows == "Left"),
+        "RHP" = d %>% filter(PitcherThrows == "Right"),
+        d
+      )
     } else {
       d <- d %>% filter(BatterTeam %in% SEAGULLS_TEAM)
       if (!is.null(input$player) && input$player != "All Players")
         d <- d %>% filter(Batter == input$player)
+      # Platoon split by pitcher's throwing hand (vs LHP / vs RHP)
+      d <- switch(input$hand_split %||% "All",
+        "vs LHP" = d %>% filter(PitcherThrows == "Left"),
+        "vs RHP" = d %>% filter(PitcherThrows == "Right"),
+        d
+      )
     }
     d
   })
@@ -1387,6 +1400,14 @@ server <- function(input, output, session) {
       d <- d %>% filter(Inning >= input$player_innings[1],
                         Inning <= input$player_innings[2])
 
+    # Batter platoon split by pitcher's throwing hand — hitting view only
+    if (player_view() == "Hitting")
+      d <- switch(input$player_hand_split %||% "All",
+        "vs LHP" = d %>% filter(PitcherThrows == "Left"),
+        "vs RHP" = d %>% filter(PitcherThrows == "Right"),
+        d
+      )
+
     d
   })
 
@@ -1566,6 +1587,14 @@ server <- function(input, output, session) {
                 selectInput("player_count", label = NULL,
                   choices  = c("All", "Pitcher's Count", "Hitter's Count", "2K"),
                   selected = "All", width = "100%"),
+
+                if (ptype %in% c("hitter", "two-way")) tagList(
+                  hr(),
+                  tags$label("Pitcher Hand", style = "font-weight:600; font-size:12px;"),
+                  selectInput("player_hand_split", label = NULL,
+                    choices  = c("All", "vs LHP", "vs RHP"),
+                    selected = "All", width = "100%")
+                ),
 
                 if (ptype %in% c("pitcher", "two-way")) tagList(
                   hr(),
